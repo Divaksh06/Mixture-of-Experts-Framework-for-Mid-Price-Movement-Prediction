@@ -1,0 +1,33 @@
+# ============================================================
+# Requirements for:
+# Mixture-of-Experts Framework for Mid-Price Movement Prediction
+# ============================================================
+# Install with: pip install -r requirements.txt
+#
+# Python version: 3.10+
+# ============================================================
+
+# --- Core numerical and data libraries ---
+numpy>=1.23
+pandas>=1.5
+scipy>=1.10
+
+# --- Machine learning ---
+scikit-learn>=1.2
+xgboost>=1.7
+
+# --- Deep learning (MLP expert + Gating Network) ---
+# For CPU-only:
+torch>=2.0
+# For GPU support, install manually from https://pytorch.org/get-started/locally/
+# and comment out the line above.
+
+# --- Data loading utilities ---
+h5py>=3.7         # For .h5 or HDF5-format variants of FI-2010 (if needed)
+
+# --- Visualisation ---
+matplotlib>=3.6
+seaborn>=0.12
+
+# --- Utilities ---
+tqdm>=4.64        # Progress bars during training loops
