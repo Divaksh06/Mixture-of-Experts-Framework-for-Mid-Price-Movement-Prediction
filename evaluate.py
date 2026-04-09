@@ -55,18 +55,18 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
 
     n_test = len(y_test)
 
-    # Generate per-sample mid-price returns (synthetic from label direction)
+    # Generate per-sample mid-price returns (deterministic from label direction)
     # Since we don't have actual prices, we simulate returns based on labels:
-    # Up (0) -> small positive return, Stationary (1) -> ~0, Down (2) -> small negative
-    np.random.seed(42 + fold_idx)
+    # Up (0) -> fixed positive return, Stationary (1) -> 0, Down (2) -> fixed negative
+    BASE_RETURN = 0.0002
     mid_price_returns = np.zeros(n_test)
     for i in range(n_test):
-        if y_test[i] == 0:  # Up
-            mid_price_returns[i] = abs(np.random.normal(0.0002, 0.0001))
+        if y_test[i] == 0:    # Up
+            mid_price_returns[i] = BASE_RETURN
         elif y_test[i] == 2:  # Down
-            mid_price_returns[i] = -abs(np.random.normal(0.0002, 0.0001))
-        else:  # Stationary
-            mid_price_returns[i] = np.random.normal(0.0, 0.00005)
+            mid_price_returns[i] = -BASE_RETURN
+        else:                 # Stationary
+            mid_price_returns[i] = 0.0
 
     # Get individual expert predictions for backtracking
     lr_preds = np.argmax(test_probs_lr, axis=1)
@@ -81,16 +81,16 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
     for i in range(n_test):
         action = strategy_no_bt.decide(pfinal_test[i])
         actions_no_bt.append(action)
-        ret = mid_price_returns[i] if i < n_test - 1 else 0.0
+        ret = mid_price_returns[i]
         engine_no_bt.step(action, ret)
-    engine_no_bt.close_position()
+    engine_no_bt.close_position(mid_price_returns[-1] if len(mid_price_returns) > 0 else 0.0)
 
     # Metrics without backtracking
     moe_preds = np.argmax(pfinal_test, axis=1)
     no_bt_metrics = {
         'accuracy': accuracy_score(y_test, moe_preds),
-        'macro_f1': f1_score(y_test, moe_preds, average='macro'),
-        'per_class_f1': f1_score(y_test, moe_preds, average=None),
+        'macro_f1': f1_score(y_test, moe_preds, average='macro', zero_division=0),
+        'per_class_f1': f1_score(y_test, moe_preds, average=None, labels=[0, 1, 2], zero_division=0),
         'cum_return': cumulative_return(engine_no_bt.get_values_history()),
         'sharpe': sharpe_ratio(engine_no_bt.get_step_returns()),
         'mdd': max_drawdown(engine_no_bt.get_values_history()),
@@ -140,8 +140,11 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
 
         actions_bt.append(action)
 
+        # Set previous action BEFORE adding observation (BUG 10 fix)
+        bt_module.set_prev_action(action, y_pred)
+
         # Simulate portfolio step
-        ret = mid_price_returns[i] if i < n_test - 1 else 0.0
+        ret = mid_price_returns[i]
         engine_bt.step(action, ret)
 
         # Add observation to backtracking buffer
@@ -152,16 +155,15 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         if bt_module.should_update():
             bt_module.update()
 
-        bt_module.set_prev_action(action, y_pred)
-
-    engine_bt.close_position()
+    engine_bt.close_position(mid_price_returns[-1] if len(mid_price_returns) > 0 else 0.0)
+    engine_bt.close_short(mid_price_returns[-1] if len(mid_price_returns) > 0 else 0.0)
 
     # Metrics with backtracking
     moe_preds_bt = np.argmax(pfinal_bt_all, axis=1)
     bt_metrics = {
         'accuracy': accuracy_score(y_test, moe_preds_bt),
-        'macro_f1': f1_score(y_test, moe_preds_bt, average='macro'),
-        'per_class_f1': f1_score(y_test, moe_preds_bt, average=None),
+        'macro_f1': f1_score(y_test, moe_preds_bt, average='macro', zero_division=0),
+        'per_class_f1': f1_score(y_test, moe_preds_bt, average=None, labels=[0, 1, 2], zero_division=0),
         'cum_return': cumulative_return(engine_bt.get_values_history()),
         'sharpe': sharpe_ratio(engine_bt.get_step_returns()),
         'mdd': max_drawdown(engine_bt.get_values_history()),

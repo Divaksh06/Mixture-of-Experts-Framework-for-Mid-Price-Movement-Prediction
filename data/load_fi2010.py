@@ -38,88 +38,54 @@ def load_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore'):
     Returns
     -------
     X_train : np.ndarray, shape (n_train, 144)
-        Training features (Z-score normalized).
+        Training features (normalized).
     y_train : np.ndarray, shape (n_train,)
         Training labels in {0, 1, 2}.
     X_test : np.ndarray, shape (n_test, 144)
-        Test features (Z-score normalized using training statistics).
+        Test features (normalized using training statistics if applicable).
     y_test : np.ndarray, shape (n_test,)
         Test labels in {0, 1, 2}.
     class_weights : np.ndarray, shape (3,)
         Balanced class weights computed from training labels.
     """
-    # ----------------------------------------------------------------
-    # ORIGINAL: Parameterized fold loading (supports all 9 folds)
-    # Commented out to restrict training/testing to a single file.
-    # ----------------------------------------------------------------
-    # # Parse normalization string to build paths
-    # # e.g. 'NoAuction_Zscore' -> category='NoAuction', norm_name='Zscore'
-    # parts = normalization.split('_', 1)
-    # if len(parts) != 2:
-    #     raise ValueError(
-    #         f"normalization must be like 'NoAuction_Zscore', got '{normalization}'"
-    #     )
-    # category, norm_name = parts  # e.g., 'NoAuction', 'Zscore'
-    #
-    # # Determine the numeric prefix for the normalization subfolder
-    # norm_prefix_map = {'Zscore': '1', 'MinMax': '2', 'DecPre': '3'}
-    # if norm_name not in norm_prefix_map:
-    #     raise ValueError(
-    #         f"Unknown normalization '{norm_name}'. Must be one of {list(norm_prefix_map.keys())}"
-    #     )
-    # prefix = norm_prefix_map[norm_name]
-    #
-    # # Map norm_name to the casing used in actual filenames
-    # # Directories use 'Zscore' but filenames use 'ZScore' (capital S)
-    # file_norm_name_map = {'Zscore': 'ZScore', 'MinMax': 'MinMax', 'DecPre': 'DecPre'}
-    # file_norm_name = file_norm_name_map[norm_name]
-    #
-    # # Build directory paths
-    # # e.g. BenchmarkDatasets/NoAuction/1.NoAuction_Zscore/
-    # norm_dir = os.path.join(
-    #     dataset_root, category,
-    #     f"{prefix}.{category}_{norm_name}"
-    # )
-    #
-    # train_dir = os.path.join(norm_dir, f"{category}_{norm_name}_Training")
-    # test_dir = os.path.join(norm_dir, f"{category}_{norm_name}_Testing")
-    #
-    # # Build file paths (filenames use ZScore not Zscore)
-    # train_file = os.path.join(
-    #     train_dir, f"Train_Dst_{category}_{file_norm_name}_CF_{fold_idx}.txt"
-    # )
-    # test_file = os.path.join(
-    #     test_dir, f"Test_Dst_{category}_{file_norm_name}_CF_{fold_idx}.txt"
-    # )
-    #
-    # # Load data files
-    # try:
-    #     # FI-2010 .txt files are TRANSPOSED: shape (149, N_samples)
-    #     # Rows 0-143 = features, rows 144-148 = labels for k=1,2,3,5,10
-    #     train_raw = np.loadtxt(train_file)
-    #     test_raw = np.loadtxt(test_file)
-    # except FileNotFoundError as e:
-    #     raise FileNotFoundError(
-    #         f"Could not find dataset file. Expected:\n"
-    #         f"  Train: {train_file}\n"
-    #         f"  Test:  {test_file}\n"
-    #         f"Please ensure the FI-2010 dataset is placed at '{dataset_root}' "
-    #         f"with the correct directory structure.\n"
-    #         f"Original error: {e}"
-    #     )
-    # ----------------------------------------------------------------
+    # Parse normalization string to build paths
+    # e.g. 'NoAuction_Zscore' -> category='NoAuction', norm_name='Zscore'
+    parts = normalization.split('_', 1)
+    if len(parts) != 2:
+        raise ValueError(
+            f"normalization must be like 'NoAuction_Zscore', got '{normalization}'"
+        )
+    category, norm_name = parts  # e.g., 'NoAuction', 'Zscore'
 
-    # SINGLE FILE: Only use Train/Test_Dst_NoAuction_ZScore_CF_1
-    # (ignores fold_idx parameter — always loads fold 1)
+    # Determine the numeric prefix for the normalization subfolder
+    norm_prefix_map = {'Zscore': '1', 'MinMax': '2', 'DecPre': '3'}
+    if norm_name not in norm_prefix_map:
+        raise ValueError(
+            f"Unknown normalization '{norm_name}'. Must be one of {list(norm_prefix_map.keys())}"
+        )
+    prefix = norm_prefix_map[norm_name]
+
+    # Map norm_name to the casing used in actual filenames
+    # Directories use 'Zscore' but filenames use 'ZScore' (capital S)
+    file_norm_name_map = {'Zscore': 'ZScore', 'MinMax': 'MinMax', 'DecPre': 'DecPre'}
+    file_norm_name = file_norm_name_map[norm_name]
+
+    # Build directory paths
+    # e.g. BenchmarkDatasets/NoAuction/1.NoAuction_Zscore/
+    norm_dir = os.path.join(
+        dataset_root, category,
+        f"{prefix}.{category}_{norm_name}"
+    )
+
+    train_dir = os.path.join(norm_dir, f"{category}_{norm_name}_Training")
+    test_dir = os.path.join(norm_dir, f"{category}_{norm_name}_Testing")
+
+    # Build file paths (filenames use ZScore not Zscore)
     train_file = os.path.join(
-        dataset_root, "NoAuction", "1.NoAuction_Zscore",
-        "NoAuction_Zscore_Training",
-        "Train_Dst_NoAuction_ZScore_CF_1.txt"
+        train_dir, f"Train_Dst_{category}_{file_norm_name}_CF_{fold_idx}.txt"
     )
     test_file = os.path.join(
-        dataset_root, "NoAuction", "1.NoAuction_Zscore",
-        "NoAuction_Zscore_Testing",
-        "Test_Dst_NoAuction_ZScore_CF_1.txt"
+        test_dir, f"Test_Dst_{category}_{file_norm_name}_CF_{fold_idx}.txt"
     )
 
     # Load data files
@@ -151,10 +117,12 @@ def load_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore'):
     y_train_raw = train_raw[:, 148].astype(np.int64)
     y_test_raw = test_raw[:, 148].astype(np.int64)
 
-    # Re-apply Z-score normalization: fit on training fold, transform both
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    # Apply Z-score normalization only if the data is NOT already Z-score normalized.
+    # Files under NoAuction_Zscore (and Auction_Zscore) are already Z-score normalized.
+    if 'Zscore' not in normalization:
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
 
     # Convert labels from {1, 2, 3} to {0, 1, 2}
     y_train = y_train_raw - 1

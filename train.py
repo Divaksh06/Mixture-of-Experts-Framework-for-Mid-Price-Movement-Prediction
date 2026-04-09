@@ -5,7 +5,6 @@ Stage 1: Train each expert independently on the training data.
 Stage 2: Generate cross-validated stacked probabilities from experts.
 Stage 3: Train the gating network on the stacked probabilities.
 
-Currently configured to train on a single file (NoAuction_ZScore_CF_1).
 All trained models and probabilities are saved to results/fold_{t}/.
 """
 
@@ -13,13 +12,17 @@ import os
 import pickle
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score, accuracy_score
+import xgboost as xgb
 
 from data.load_fi2010 import load_fold
 from experts.logistic_regression import LRExpert
 from experts.xgboost_expert import XGBExpert
 from experts.mlp_expert import MLPExpert
 from moe.gating_network import GatingTrainer
-from moe.mixture import get_stacked_probs
+from moe.mixture import get_stacked_probs, compute_pfinal
 
 
 def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
@@ -44,17 +47,8 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
         Dictionary containing trained models, expert metrics,
         and generated probabilities.
     """
-    # ----------------------------------------------------------------
-    # ORIGINAL: Multi-fold loading header
-    # ----------------------------------------------------------------
-    # print(f"\n{'='*60}")
-    # print(f"  Fold {fold_idx}/9: Loading data...")
-    # print(f"{'='*60}")
-    # ----------------------------------------------------------------
-
-    # SINGLE FILE: Loading header
     print(f"\n{'='*60}")
-    print(f"  NoAuction_ZScore_CF_1: Loading data...")
+    print(f"  Fold {fold_idx}/9: Loading data...")
     print(f"{'='*60}")
 
     # Load data
@@ -70,10 +64,7 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     os.makedirs(fold_dir, exist_ok=True)
 
     # ========== Stage 1: Independent Expert Training ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 1 — Training experts...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 1 — Training experts...")
+    print(f"\n  Fold {fold_idx}/9: Stage 1 — Training experts...")
 
     # Train LR
     print(f"    Training Logistic Regression...")
@@ -100,11 +91,12 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     print(f"    MLP — Accuracy: {mlp_metrics['accuracy']:.4f}, "
           f"Macro-F1: {mlp_metrics['macro_f1']:.4f}")
 
+    # Extract best hyperparameters from Stage 1 for use in inner CV
+    lr_best_C = lr_expert.best_C
+    xgb_best_params = xgb_expert.best_params
+
     # ========== Stage 2: Expert Probability Generation ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 2 — Generating stacked probabilities...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 2 — Generating stacked probabilities...")
+    print(f"\n  Fold {fold_idx}/9: Stage 2 — Generating stacked probabilities...")
 
     # Generate cross-validated probabilities on training data
     # to avoid overfitting when training the gating network
@@ -120,21 +112,33 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
         y_tr = y_train[tr_idx]
 
         # Compute inner class weights
-        from sklearn.utils.class_weight import compute_class_weight
         inner_cw = compute_class_weight('balanced', classes=np.array([0, 1, 2]),
                                         y=y_tr).astype(np.float32)
 
-        # LR
-        lr_inner = LRExpert()
-        lr_inner.fit(X_tr, y_tr, inner_cw)
-        train_probs_lr[val_idx] = lr_inner.predict_proba(X_val)
+        # LR inner — use fixed best C from Stage 1 (no nested CV)
+        lr_inner_model = LogisticRegression(
+            C=lr_best_C, solver='lbfgs', max_iter=1000,
+            class_weight={i: float(inner_cw[i]) for i in range(3)},
+            random_state=42, n_jobs=-1
+        )
+        lr_inner_model.fit(X_tr, y_tr)
+        train_probs_lr[val_idx] = lr_inner_model.predict_proba(X_val)
 
-        # XGB
-        xgb_inner = XGBExpert()
-        xgb_inner.fit(X_tr, y_tr, inner_cw)
-        train_probs_xgb[val_idx] = xgb_inner.predict_proba(X_val)
+        # XGB inner — use fixed best params from Stage 1 (no nested CV)
+        xgb_inner_model = xgb.XGBClassifier(
+            n_estimators=200,
+            max_depth=xgb_best_params['max_depth'],
+            learning_rate=xgb_best_params['learning_rate'],
+            subsample=0.8, colsample_bytree=0.8,
+            objective='multi:softprob', num_class=3,
+            eval_metric='mlogloss',
+            random_state=42, n_jobs=-1, verbosity=0
+        )
+        inner_sw = np.array([inner_cw[int(l)] for l in y_tr], dtype=np.float32)
+        xgb_inner_model.fit(X_tr, y_tr, sample_weight=inner_sw, verbose=False)
+        train_probs_xgb[val_idx] = xgb_inner_model.predict_proba(X_val)
 
-        # MLP
+        # MLP inner — use MLPExpert but with no nested CV (fit directly)
         mlp_inner = MLPExpert()
         mlp_inner.fit(X_tr, y_tr, inner_cw)
         train_probs_mlp[val_idx] = mlp_inner.predict_proba(X_val)
@@ -142,10 +146,7 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     stacked_train = get_stacked_probs(train_probs_lr, train_probs_xgb, train_probs_mlp)
 
     # ========== Stage 3: Gating Network Training ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 3 — Training gating network...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 3 — Training gating network...")
+    print(f"\n  Fold {fold_idx}/9: Stage 3 — Training gating network...")
 
     gating_trainer = GatingTrainer()
     gating_trainer.fit(
@@ -166,12 +167,10 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     test_weights = gating_trainer.get_weights(stacked_test)
 
     # Compute MoE final predictions on test
-    from moe.mixture import compute_pfinal
     pfinal_test = compute_pfinal(test_weights, test_probs_lr, test_probs_xgb,
                                  test_probs_mlp)
     moe_preds = np.argmax(pfinal_test, axis=1)
 
-    from sklearn.metrics import f1_score, accuracy_score
     moe_acc = accuracy_score(y_test, moe_preds)
     moe_f1 = f1_score(y_test, moe_preds, average='macro')
     print(f"    MoE — Accuracy: {moe_acc:.4f}, Macro-F1: {moe_f1:.4f}")

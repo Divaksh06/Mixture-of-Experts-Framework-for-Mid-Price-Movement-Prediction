@@ -31,8 +31,6 @@ class BacktrackingModule:
         False negative rate threshold for decreasing thresholds.
     theta_reverse : float
         Probability threshold for action reversal.
-    error_margin : float
-        Tolerance for treating a prediction as correct (default 0.05).
     expert_weights : np.ndarray, shape (3,)
         Current expert weights.
     theta_buy : float
@@ -45,8 +43,7 @@ class BacktrackingModule:
 
     def __init__(self, initial_weights=None, theta_buy=0.55, theta_sell=0.55,
                  delta=0.10, N_buf=100, N_upd=50, epsilon_theta=0.02,
-                 tau_FP=0.15, tau_FN=0.10, theta_reverse=0.70,
-                 error_margin=0.05):
+                 tau_FP=0.15, tau_FN=0.10, theta_reverse=0.70):
         """
         Initialize the backtracking module.
 
@@ -72,10 +69,6 @@ class BacktrackingModule:
             False negative rate trigger threshold.
         theta_reverse : float
             Reversal signal threshold.
-        error_margin : float
-            Tolerance for treating a prediction as correct (default 0.05).
-            A prediction is considered correct if
-            |prediction - true_label| <= error_margin.
         """
         if initial_weights is not None:
             self.expert_weights = np.array(initial_weights, dtype=np.float64)
@@ -92,7 +85,6 @@ class BacktrackingModule:
         self.tau_FP = tau_FP
         self.tau_FN = tau_FN
         self.theta_reverse = theta_reverse
-        self.error_margin = error_margin
 
         # Buffer stores tuples: (y_pred, pfinal, action, y_true, expert_preds)
         self.buffer = deque(maxlen=N_buf)
@@ -156,7 +148,7 @@ class BacktrackingModule:
                 if obs['expert_preds'] is not None:
                     for e_idx in range(3):
                         expert_total[e_idx] += 1
-                        if abs(obs['expert_preds'][e_idx] - obs['y_true']) <= self.error_margin:
+                        if int(obs['expert_preds'][e_idx]) == int(obs['y_true']):
                             expert_correct[e_idx] += 1
 
             alpha = np.zeros(3)
@@ -203,11 +195,11 @@ class BacktrackingModule:
                 if obs['action'] != 'Sell':
                     sell_fn += 1
 
-        # Compute rates
-        fp_rate_buy = buy_fp / n if n > 0 else 0
-        fn_rate_buy = buy_fn / n if n > 0 else 0
-        fp_rate_sell = sell_fp / n if n > 0 else 0
-        fn_rate_sell = sell_fn / n if n > 0 else 0
+        # Compute rates (correct denominators)
+        fp_rate_buy = buy_fp / buy_actions if buy_actions > 0 else 0.0
+        fn_rate_buy = buy_fn / true_up if true_up > 0 else 0.0
+        fp_rate_sell = sell_fp / sell_actions if sell_actions > 0 else 0.0
+        fn_rate_sell = sell_fn / true_down if true_down > 0 else 0.0
 
         # Adjust theta_buy
         if fp_rate_buy > self.tau_FP:
@@ -220,6 +212,12 @@ class BacktrackingModule:
             self.theta_sell = min(self.theta_sell + self.epsilon_theta, 0.85)
         elif fn_rate_sell > self.tau_FN:
             self.theta_sell = max(self.theta_sell - self.epsilon_theta, 0.45)
+
+        # Adjust delta
+        if (fp_rate_buy + fp_rate_sell) / 2 > self.tau_FP:
+            self.delta = min(self.delta + self.epsilon_theta, 0.40)
+        elif (fn_rate_buy + fn_rate_sell) / 2 > self.tau_FN:
+            self.delta = max(self.delta - self.epsilon_theta, 0.01)
 
     def check_action_correction(self, pfinal, action):
         """

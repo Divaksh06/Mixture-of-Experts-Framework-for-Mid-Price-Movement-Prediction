@@ -2,7 +2,7 @@
 Backtesting Engine for the MoE framework.
 
 Simulates a hypothetical trading account using the sequence of strategy
-actions and realized mid-price returns. Implements long-only trading
+actions and realized mid-price returns. Implements long and short trading
 with proportional transaction costs.
 """
 
@@ -14,7 +14,7 @@ class BacktestEngine:
     Portfolio simulation engine.
 
     Simulates trading with Buy/Hold/Sell signals, tracking portfolio value
-    over time. Long-only: Buy opens a position, Sell closes it.
+    over time. Supports long and short positions.
 
     Attributes
     ----------
@@ -26,6 +26,8 @@ class BacktestEngine:
         Current portfolio value.
     position_open : bool
         Whether a long position is currently open.
+    short_position_open : bool
+        Whether a short position is currently open.
     values : list of float
         Portfolio value history.
     trade_returns : list of float
@@ -54,6 +56,8 @@ class BacktestEngine:
         self.portfolio_value = self.initial_capital
         self.position_open = False
         self.entry_value = 0.0
+        self.short_position_open = False
+        self.short_entry_value = 0.0
         self.values = [self.initial_capital]
         self.trade_returns = []
         self.actions_taken = []
@@ -73,11 +77,21 @@ class BacktestEngine:
         self.actions_taken.append(action)
         step_ret = 0.0
 
-        if action == 'Buy' and not self.position_open:
+        if action == 'Buy' and not self.position_open and not self.short_position_open:
             # Open long position, pay transaction cost
             self.portfolio_value *= (1.0 - self.transaction_cost)
             self.position_open = True
             self.entry_value = self.portfolio_value
+
+        elif action == 'Buy' and self.short_position_open:
+            # Close short position: profit when price fell
+            self.portfolio_value *= (1.0 - mid_price_return)
+            self.portfolio_value *= (1.0 - self.transaction_cost)
+            self.short_position_open = False
+            if self.short_entry_value > 0:
+                trade_ret = (self.portfolio_value - self.short_entry_value) / self.short_entry_value
+                self.trade_returns.append(trade_ret)
+            step_ret = -mid_price_return - self.transaction_cost
 
         elif action == 'Sell' and self.position_open:
             # Apply the return first, then close with transaction cost
@@ -90,10 +104,21 @@ class BacktestEngine:
                 self.trade_returns.append(trade_ret)
             step_ret = mid_price_return - self.transaction_cost
 
+        elif action == 'Sell' and not self.position_open and not self.short_position_open:
+            # Open short position
+            self.portfolio_value *= (1.0 - self.transaction_cost)
+            self.short_position_open = True
+            self.short_entry_value = self.portfolio_value
+
         elif self.position_open:
-            # Position is open and action is Hold (or Buy while already in)
+            # Handles: Hold while long, or Buy signal when already long (no pyramid)
             self.portfolio_value *= (1.0 + mid_price_return)
             step_ret = mid_price_return
+
+        elif self.short_position_open:
+            # Short position open: gains when price falls
+            self.portfolio_value *= (1.0 - mid_price_return)
+            step_ret = -mid_price_return
 
         # If no position and Hold or Sell, no change
         self.values.append(self.portfolio_value)
@@ -101,7 +126,7 @@ class BacktestEngine:
 
     def close_position(self, mid_price_return=0.0):
         """
-        Force-close any open position at end of day.
+        Force-close any open long position at end of day.
 
         Parameters
         ----------
@@ -114,6 +139,23 @@ class BacktestEngine:
             self.position_open = False
             if self.entry_value > 0:
                 trade_ret = (self.portfolio_value - self.entry_value) / self.entry_value
+                self.trade_returns.append(trade_ret)
+
+    def close_short(self, mid_price_return=0.0):
+        """
+        Force-close any open short position at end of day.
+
+        Parameters
+        ----------
+        mid_price_return : float
+            Final return for closing.
+        """
+        if self.short_position_open:
+            self.portfolio_value *= (1.0 - mid_price_return)
+            self.portfolio_value *= (1.0 - self.transaction_cost)
+            self.short_position_open = False
+            if self.short_entry_value > 0:
+                trade_ret = (self.portfolio_value - self.short_entry_value) / self.short_entry_value
                 self.trade_returns.append(trade_ret)
 
     def get_portfolio_value(self):

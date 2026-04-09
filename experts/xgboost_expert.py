@@ -78,7 +78,6 @@ class XGBExpert:
                         objective='multi:softprob',
                         num_class=3,
                         eval_metric='mlogloss',
-                        use_label_encoder=False,
                         random_state=42,
                         n_jobs=-1,
                         verbosity=0
@@ -110,7 +109,6 @@ class XGBExpert:
             objective='multi:softprob',
             num_class=3,
             eval_metric='mlogloss',
-            use_label_encoder=False,
             random_state=42,
             n_jobs=-1,
             verbosity=0

@@ -9,6 +9,7 @@ each expert's contribution to the final prediction.
 Architecture: Input(9) -> Dense(64, ReLU) -> Dense(3, Softmax)
 """
 
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -67,6 +68,7 @@ class GatingTrainer:
 
     Trains the gating network to minimize cross-entropy loss between
     the gating-weighted expert combination and the true labels.
+    Includes early stopping based on a held-out validation split.
 
     Attributes
     ----------
@@ -91,12 +93,16 @@ class GatingTrainer:
         self.model = None
 
     def fit(self, stacked_probs, expert_probs_list, y, batch_size=256,
-            epochs=30, lr=1e-3):
+            epochs=30, lr=1e-3, patience=5):
         """
         Train the gating network.
 
         The gating network learns weights w = g(stacked_probs) such that
         P_final = w1*P_LR + w2*P_XGB + w3*P_MLP minimizes cross-entropy.
+
+        A 10% validation split is held out for early stopping. Training
+        stops if validation loss does not improve for `patience` consecutive
+        epochs, and the best model state is restored.
 
         Parameters
         ----------
@@ -113,16 +119,31 @@ class GatingTrainer:
             Number of training epochs.
         lr : float
             Learning rate.
+        patience : int
+            Number of epochs without validation improvement before stopping.
         """
         self.model = GatingNetwork(input_dim=stacked_probs.shape[1]).to(self.device)
 
-        # Convert to tensors
-        stacked_t = torch.tensor(stacked_probs, dtype=torch.float32)
-        y_t = torch.tensor(y, dtype=torch.long)
+        # --- Validation split (10%) ---
+        n_samples = len(y)
+        n_val = max(1, int(0.1 * n_samples))
+        indices = np.arange(n_samples)
+        np.random.shuffle(indices)
+        val_indices = indices[:n_val]
+        train_indices = indices[n_val:]
 
-        # Expert probs as tensors
+        # Training tensors
+        stacked_t = torch.tensor(stacked_probs[train_indices], dtype=torch.float32)
+        y_t = torch.tensor(y[train_indices], dtype=torch.long)
         expert_tensors = [
-            torch.tensor(p, dtype=torch.float32) for p in expert_probs_list
+            torch.tensor(p[train_indices], dtype=torch.float32) for p in expert_probs_list
+        ]
+
+        # Validation tensors
+        val_stacked_t = torch.tensor(stacked_probs[val_indices], dtype=torch.float32).to(self.device)
+        val_y_t = torch.tensor(y[val_indices], dtype=torch.long).to(self.device)
+        val_expert_tensors = [
+            torch.tensor(p[val_indices], dtype=torch.float32).to(self.device) for p in expert_probs_list
         ]
 
         dataset = TensorDataset(
@@ -133,8 +154,13 @@ class GatingTrainer:
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
-        self.model.train()
+        best_val_loss = float('inf')
+        best_state = None
+        epochs_without_improvement = 0
+
         for epoch in range(epochs):
+            # --- Training ---
+            self.model.train()
             total_loss = 0.0
             n_batches = 0
             for batch_stacked, batch_p1, batch_p2, batch_p3, batch_y in loader:
@@ -166,6 +192,31 @@ class GatingTrainer:
 
                 total_loss += loss.item()
                 n_batches += 1
+
+            # --- Validation ---
+            self.model.eval()
+            with torch.no_grad():
+                val_weights = self.model(val_stacked_t)
+                val_p_final = (
+                    val_weights[:, 0:1] * val_expert_tensors[0] +
+                    val_weights[:, 1:2] * val_expert_tensors[1] +
+                    val_weights[:, 2:3] * val_expert_tensors[2]
+                )
+                val_log_p = torch.log(val_p_final + 1e-10)
+                val_loss = nn.NLLLoss()(val_log_p, val_y_t).item()
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = copy.deepcopy(self.model.state_dict())
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if epochs_without_improvement >= patience:
+                    break
+
+        # Restore best model
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
 
     def get_weights(self, stacked_probs):
         """

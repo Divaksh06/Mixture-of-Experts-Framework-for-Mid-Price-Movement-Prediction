@@ -112,4 +112,4 @@ class StrategyLayer:
         if theta_sell is not None:
             self.theta_sell = np.clip(theta_sell, 0.45, 0.85)
         if delta is not None:
-            self.delta = np.clip(delta, 0.45, 0.85)
+            self.delta = np.clip(delta, 0.01, 0.40)
