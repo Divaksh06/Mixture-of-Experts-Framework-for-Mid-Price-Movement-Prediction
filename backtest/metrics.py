@@ -27,19 +27,30 @@ def cumulative_return(values):
     return (values[-1] - values[0]) / values[0]
 
 
-def sharpe_ratio(returns, n_ann=252 * 390, rf=0.0):
+def sharpe_ratio(returns, n_ann=252, rf=0.0):
     """
     Compute annualized Sharpe ratio.
+
+    The annualization factor is ``sqrt(n_ann)``, so ``n_ann`` **must**
+    match the observation frequency of *returns*:
+
+        - Daily returns   → n_ann = 252  (default)
+        - Hourly returns  → n_ann = 252 * 6.5 ≈ 1638
+        - Minute returns  → n_ann = 252 * 390 = 98 280
+
+    Using the wrong frequency inflates / deflates the ratio by
+    ``sqrt(wrong / correct)``.
 
     Parameters
     ----------
     returns : list or np.ndarray
         Per-step strategy returns.
     n_ann : int
-        Number of periods per year for annualization.
-        Default: 252 trading days * 390 minutes per day (rough HFT estimate).
+        Number of return observations per trading year.
+        Default: 252 (daily returns — 252 trading days per year).
     rf : float
-        Risk-free rate per period. Default: 0.
+        Risk-free rate **per period** (same frequency as *returns*).
+        Default: 0.
 
     Returns
     -------
