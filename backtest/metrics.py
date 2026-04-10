@@ -1,8 +1,8 @@
 """
 Financial Performance Metrics for the Backtesting Engine.
 
-Computes cumulative return, annualized Sharpe ratio, maximum drawdown,
-win rate, decision accuracy, and buy-and-hold benchmark return.
+Computes cumulative return, return-to-volatility ratio, Sortino ratio, 
+maximum drawdown, win rate, decision accuracy, and benchmark returns.
 """
 
 import numpy as np
@@ -27,30 +27,44 @@ def cumulative_return(values):
     return (values[-1] - values[0]) / values[0]
 
 
-def sharpe_ratio(returns, n_ann=1, rf=0.0):
+def return_to_volatility_ratio(returns, rf=0.0):
     """
-    Compute annualized Sharpe ratio.
+    Compute raw time-series return-to-volatility ratio (non-annualized Sharpe).
 
     Parameters
     ----------
     returns : list or np.ndarray
         Per-step strategy returns.
-    n_ann : int
-        Number of periods per year for annualization.
-        Default: 252 trading days * 390 minutes per day (rough HFT estimate).
     rf : float
         Risk-free rate per period. Default: 0.
 
     Returns
     -------
-    sharpe : float
-        Annualized Sharpe ratio. Returns 0 if std is 0.
+    ratio : float
+        Signal-to-noise ratio within the dataset timeframe.
     """
     returns = np.array(returns)
     if len(returns) == 0 or np.std(returns) == 0:
         return 0.0
     excess = returns - rf
-    return (np.mean(excess) / np.std(excess)) * np.sqrt(n_ann)
+    return float(np.mean(excess) / np.std(excess))
+
+
+def sortino_ratio(returns, rf=0.0):
+    """
+    Compute Sortino ratio evaluating strictly downside volatility.
+    """
+    returns = np.array(returns)
+    if len(returns) == 0:
+        return 0.0
+    excess = returns - rf
+    downside = np.minimum(excess, 0)
+    downside_std = np.std(downside)
+    
+    if downside_std == 0:
+        print("    [Warning] Sortino undefined due to zero downside volatility")
+        return np.nan
+    return float(np.mean(excess) / downside_std)
 
 
 def max_drawdown(values):

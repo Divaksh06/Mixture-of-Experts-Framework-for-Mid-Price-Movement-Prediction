@@ -1,137 +1,70 @@
 """
-Experiment Pipeline for the MoE Mid-Price Movement Prediction Framework.
+Evaluation-Only Script: Loads pre-trained fold_results.pkl files
+and runs ONLY Stage 4 (new evaluate.py) + Stage 5 aggregation.
 
-Runs the pipeline on a single file (Train/Test_Dst_NoAuction_ZScore_CF_1)
-from the FI-2010 benchmark dataset:
-  - Stage 1: Train experts (LR, XGBoost, MLP)
-  - Stage 2: Generate stacked expert probabilities
-  - Stage 3: Train gating network
-  - Stage 4: Strategy + backtracking + backtesting
-  - Stage 5: Report metrics
+Skips all training (~25000s). Runs in ~30-60 seconds.
 
 Usage:
-    python run_experiment.py
-
-Configure DATASET_ROOT below to point to your FI-2010 dataset location.
+    python run_eval_only.py
 """
 
 import os
-
-# Prevent MacOS OpenMP segfaults
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import sys
+import pickle
 import time
-import random
 import numpy as np
-import torch
 
-# ============================================================
-# CONFIGURATION — Edit these as needed
-# ============================================================
-DATASET_ROOT = "data/BenchmarkDatasets"          # Path to FI-2010 dataset root
-NORMALIZATION = "NoAuction_DecPre"          # Normalization variant
-RESULTS_DIR = "results"                     # Directory for saving outputs
-N_FOLDS = 1                                # Number of CV folds
-SEED = 42                                   # Global random seed
-# ============================================================
+from evaluate import evaluate_fold
 
-
-def set_global_seed(seed):
-    """Set random seeds for reproducibility across all libraries."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    os.environ['PYTHONHASHSEED'] = str(seed)
+RESULTS_DIR = "results"
+N_FOLDS = 9
 
 
 def main():
-    """Run the experiment pipeline on a single file."""
-    set_global_seed(SEED)
-
     print("=" * 70)
-    print("  Mixture-of-Experts Framework for Mid-Price Movement Prediction")
-    print("  FI-2010 Benchmark Dataset — Full Pipeline")
-    print("=" * 70)
-    print(f"  Dataset root:    {DATASET_ROOT}")
-    print(f"  Normalization:   {NORMALIZATION}")
-    print(f"  Results dir:     {RESULTS_DIR}")
-    print(f"  Number of folds: {N_FOLDS}")
-    print(f"  Random seed:     {SEED}")
+    print("  EVALUATION-ONLY MODE (skipping training)")
+    print("  Loading pre-computed fold_results.pkl from previous run")
     print("=" * 70)
 
-    # Verify dataset exists
-    expected_path = os.path.join(
-        DATASET_ROOT, "NoAuction", "3.NoAuction_DecPre",
-        "NoAuction_DecPre_Training"
-    )
-    if not os.path.isdir(expected_path):
-        print(f"\n  ERROR: Dataset directory not found at '{expected_path}'")
-        print(f"  Please ensure the FI-2010 dataset is placed at '{DATASET_ROOT}'")
-        print(f"  with the correct directory structure.")
-        print(f"  See README.md for setup instructions.")
-        sys.exit(1)
-
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-
-    # Import pipeline modules
-    from data.cross_val import anchored_forward_cv
-    from train import train_fold
-    from evaluate import evaluate_fold
-
-    # Storage for all fold metrics
     all_eval_metrics = []
-    all_fold_results = []
-
     total_start = time.time()
 
-    # ========== Process each fold ==========
-    for fold_idx in anchored_forward_cv(N_FOLDS):
-        fold_start = time.time()
-        set_global_seed(SEED + fold_idx)
+    for fold_idx in range(1, N_FOLDS + 1):
+        pkl_path = os.path.join(RESULTS_DIR, f"fold_{fold_idx}", "fold_results.pkl")
+        if not os.path.exists(pkl_path):
+            print(f"  [SKIP] {pkl_path} not found")
+            continue
 
-        # Stages 1–3: Training
-        fold_results = train_fold(
-            fold_idx=fold_idx,
-            dataset_root=DATASET_ROOT,
-            normalization=NORMALIZATION,
-            results_dir=RESULTS_DIR
-        )
-        all_fold_results.append(fold_results)
+        print(f"\n  Loading fold {fold_idx}...")
+        with open(pkl_path, 'rb') as f:
+            fold_results = pickle.load(f)
 
-        # Stage 4: Evaluation
         eval_metrics = evaluate_fold(
             fold_idx=fold_idx,
             fold_results=fold_results,
             results_dir=RESULTS_DIR
         )
         all_eval_metrics.append(eval_metrics)
-
-        fold_time = time.time() - fold_start
-        print(f"  Fold {fold_idx}/9 completed in {fold_time:.1f}s")
+        print(f"  Fold {fold_idx}/{N_FOLDS} evaluation complete.")
 
     total_time = time.time() - total_start
+
+    if not all_eval_metrics:
+        print("\n  ERROR: No fold results found. Run run_experiment.py first.")
+        return
 
     # ========== Stage 5: Aggregation with Statistical Rigor ==========
     from scipy.stats import ttest_rel, spearmanr
 
     print("\n" + "=" * 70)
     print("  STAGE 5: AGGREGATED RESULTS ACROSS ALL FOLDS")
-    print("  We report results across 9 chronological folds.")
+    print(f"  We report results across {len(all_eval_metrics)} chronological folds.")
     print("=" * 70)
 
     def fmt(v):
-        """Format mean ± std."""
         return f"{np.mean(v):.4f} ± {np.std(v):.4f}"
-
-    def fmt_int(v):
-        return f"{np.mean(v):.1f} ± {np.std(v):.1f}"
 
     # --- Classification Metrics ---
     lr_accs = [m['lr_metrics']['accuracy'] for m in all_eval_metrics]
@@ -239,9 +172,9 @@ def main():
     print("  * Weak or non-significant correlation is consistent with the hypothesis")
     print("    that classification accuracy alone does not determine profitability.")
 
-    print(f"\n  Total experiment time: {total_time:.1f}s")
+    print(f"\n  Total evaluation time: {total_time:.1f}s")
     print("=" * 70)
-    print("  Experiment complete. Results saved to:", RESULTS_DIR)
+    print("  Evaluation complete.")
     print("=" * 70)
 
 

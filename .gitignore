@@ -28,5 +28,5 @@ env/
 
 # Pickle / results (optional: remove if you want to track results)
 *.pkl
-data/
+data/BenchmarkDatasets/
 results/

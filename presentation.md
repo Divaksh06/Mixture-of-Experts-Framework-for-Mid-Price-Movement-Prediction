@@ -76,8 +76,9 @@
 
 ---
 
-## Slide 10: Conclusion - The MoE Synergy
-- The Mixture-of-Experts pipeline automatically bridged the gap. 
+## Slide 10: Conclusion - The MoE Result
+- The Mixture-of-Experts pipeline combines diverse expert signals via a learned gating network.
 - The gating network identified that the MLP was acting conservatively and XGBoost was aggressive. 
-- By synergizing them, the MoE framework achieved the highest aggregated return of **+46.5%**, completely bypassing the raw Buy-And-Hold benchmark (+32.5%).
-- **Final Thought:** An ensemble of diverse mathematical approaches structurally outperforms the best single expert by isolating noise computationally and minimizing trading drawdowns dynamically.
+- By combining them, the MoE framework achieved a mean return of **+46.5%**, performing comparably to XGBoost solo (+43.6%).
+- However, the improvement is **not statistically significant** (p = 0.38 across 9 folds). MoE wins in only 2/9 folds, and median return is lower.
+- **Key Insight:** Predictive accuracy alone is insufficient for profitable decision-making under transaction costs and execution constraints. This is the central finding of our work.
