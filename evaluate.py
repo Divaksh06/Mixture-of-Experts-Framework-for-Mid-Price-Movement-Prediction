@@ -1,9 +1,14 @@
 """
 Evaluation Pipeline (Stage 4) for the MoE framework.
 
-For each fold: runs inference on the test set, applies the strategy layer
-with backtracking, runs the backtesting engine, and collects all
-classification and financial metrics.
+For each fold: runs inference on the test set, applies the signal-based
+strategy layer with multi-horizon agreement filtering, runs the backtesting
+engine, and collects all classification and financial metrics.
+
+Multi-Horizon Agreement:
+    The strategy action from the k=10 MoE signal is only executed if the
+    secondary k=5 LR model agrees on the directional prediction.
+    If they disagree, the action is downgraded to 'Hold'.
 """
 
 import os
@@ -17,13 +22,14 @@ from strategy.backtracking import BacktrackingModule
 from backtest.engine import BacktestEngine
 from backtest.metrics import (
     cumulative_return, sharpe_ratio, max_drawdown,
-    win_rate, decision_accuracy, buy_and_hold_return
+    win_rate, decision_accuracy, buy_and_hold_return,
+    profit_factor, turnover, average_holding_time, average_trade_return
 )
 
 
 def evaluate_fold(fold_idx, fold_results, results_dir='results'):
     """
-    Execute Stage 4 for a single fold: inference + strategy + backtracking + backtesting.
+    Execute Stage 4 for a single fold: signal strategy + backtesting.
 
     Parameters
     ----------
@@ -40,7 +46,7 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         Dictionary with all classification and financial metrics,
         including with and without backtracking.
     """
-    print(f"\n  Fold {fold_idx}/9: Stage 4 — Strategy + Backtest...")
+    print(f"\n  Fold {fold_idx}: Stage 4 — Signal Strategy + Multi-Horizon Backtest...")
 
     X_test = fold_results['X_test']
     y_test = fold_results['y_test']
@@ -55,18 +61,17 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
 
     n_test = len(y_test)
 
-    # Generate per-sample mid-price returns (synthetic from label direction)
-    # Since we don't have actual prices, we simulate returns based on labels:
-    # Up (0) -> small positive return, Stationary (1) -> ~0, Down (2) -> small negative
-    np.random.seed(42 + fold_idx)
-    mid_price_returns = np.zeros(n_test)
-    for i in range(n_test):
-        if y_test[i] == 0:  # Up
-            mid_price_returns[i] = abs(np.random.normal(0.0002, 0.0001))
-        elif y_test[i] == 2:  # Down
-            mid_price_returns[i] = -abs(np.random.normal(0.0002, 0.0001))
-        else:  # Stationary
-            mid_price_returns[i] = np.random.normal(0.0, 0.00005)
+    # Load real unscaled Mid-Prices for true return calculation
+    from data.load_fi2010 import load_mid_prices
+    try:
+        mid_prices = load_mid_prices(fold_idx, 'data/BenchmarkDatasets', split='test')
+        mid_price_returns = np.zeros(n_test)
+        for i in range(n_test - 1):
+            if mid_prices[i] > 0:
+                mid_price_returns[i] = (mid_prices[i+1] - mid_prices[i]) / mid_prices[i]
+    except Exception as e:
+        print(f"    Warning: Could not load real mid prices ({e}). Return metrics will be invalid.")
+        mid_price_returns = np.zeros(n_test)
 
     # Get individual expert predictions for backtracking
     lr_preds = np.argmax(test_probs_lr, axis=1)
@@ -74,12 +79,12 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
     mlp_preds = np.argmax(test_probs_mlp, axis=1)
 
     # ===== Run WITHOUT backtracking =====
-    strategy_no_bt = StrategyLayer(theta_buy=0.55, theta_sell=0.55, delta=0.10)
+    strategy_no_bt = StrategyLayer()
     engine_no_bt = BacktestEngine(initial_capital=10000.0, transaction_cost=0.0001)
 
     actions_no_bt = []
     for i in range(n_test):
-        action = strategy_no_bt.decide(pfinal_test[i])
+        action = strategy_no_bt.decide(pfinal_test[i], engine_no_bt.position)
         actions_no_bt.append(action)
         ret = mid_price_returns[i] if i < n_test - 1 else 0.0
         engine_no_bt.step(action, ret)
@@ -92,19 +97,59 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         'macro_f1': f1_score(y_test, moe_preds, average='macro'),
         'per_class_f1': f1_score(y_test, moe_preds, average=None),
         'cum_return': cumulative_return(engine_no_bt.get_values_history()),
-        'sharpe': sharpe_ratio(engine_no_bt.get_step_returns()),
+        'sharpe': sharpe_ratio(engine_no_bt.get_step_returns(), n_ann=252*390),
         'mdd': max_drawdown(engine_no_bt.get_values_history()),
         'win_rate': win_rate(engine_no_bt.trade_returns),
         'decision_acc': decision_accuracy(actions_no_bt, y_test),
+        'profit_factor': profit_factor(engine_no_bt.trade_returns),
+        'turnover': turnover(actions_no_bt),
+        'avg_hold_time': average_holding_time(engine_no_bt.hold_durations),
+        'avg_trade_return': average_trade_return(engine_no_bt.trade_returns),
+    }
+
+    # ===== Run XGBoost Independently =====
+    engine_xgb = BacktestEngine(initial_capital=10000.0, transaction_cost=0.0001)
+    strategy_xgb = StrategyLayer()
+    actions_xgb = []
+    for i in range(n_test):
+        action = strategy_xgb.decide(test_probs_xgb[i], engine_xgb.position)
+        actions_xgb.append(action)
+        ret = mid_price_returns[i] if i < n_test - 1 else 0.0
+        engine_xgb.step(action, ret)
+    engine_xgb.close_position()
+
+    xgb_trading_metrics = {
+        'cum_return': cumulative_return(engine_xgb.get_values_history()),
+        'sharpe': sharpe_ratio(engine_xgb.get_step_returns(), n_ann=252*390),
+        'mdd': max_drawdown(engine_xgb.get_values_history()),
+        'n_trades': len(engine_xgb.trade_returns)
+    }
+
+    # ===== Run MLP Independently =====
+    engine_mlp = BacktestEngine(initial_capital=10000.0, transaction_cost=0.0001)
+    strategy_mlp = StrategyLayer()
+    actions_mlp = []
+    for i in range(n_test):
+        action = strategy_mlp.decide(test_probs_mlp[i], engine_mlp.position)
+        actions_mlp.append(action)
+        ret = mid_price_returns[i] if i < n_test - 1 else 0.0
+        engine_mlp.step(action, ret)
+    engine_mlp.close_position()
+
+    mlp_trading_metrics = {
+        'cum_return': cumulative_return(engine_mlp.get_values_history()),
+        'sharpe': sharpe_ratio(engine_mlp.get_step_returns(), n_ann=252*390),
+        'mdd': max_drawdown(engine_mlp.get_values_history()),
+        'n_trades': len(engine_mlp.trade_returns)
     }
 
     # ===== Run WITH backtracking =====
     bt_module = BacktrackingModule(
         initial_weights=np.array([1.0 / 3, 1.0 / 3, 1.0 / 3]),
-        theta_buy=0.55, theta_sell=0.55, delta=0.10,
+        theta_buy=0.75, theta_sell=0.75, delta=0.15,
         N_buf=100, N_upd=50
     )
-    strategy_bt = StrategyLayer(theta_buy=0.55, theta_sell=0.55, delta=0.10)
+    strategy_bt = StrategyLayer()
     engine_bt = BacktestEngine(initial_capital=10000.0, transaction_cost=0.0001)
 
     actions_bt = []
@@ -129,13 +174,12 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         strategy_bt.update_thresholds(
             theta_buy=thresholds['theta_buy'],
             theta_sell=thresholds['theta_sell'],
-            delta=thresholds['delta']
         )
 
-        # Decide action
-        action = strategy_bt.decide(pfinal_i)
+        # Decide action via signal-based strategy
+        action = strategy_bt.decide(pfinal_i, engine_bt.position)
 
-        # Check for action correction (reversal override)
+        # Check for action correction (reversal override from backtracking)
         action = bt_module.check_action_correction(pfinal_i, action)
 
         actions_bt.append(action)
@@ -163,10 +207,14 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         'macro_f1': f1_score(y_test, moe_preds_bt, average='macro'),
         'per_class_f1': f1_score(y_test, moe_preds_bt, average=None),
         'cum_return': cumulative_return(engine_bt.get_values_history()),
-        'sharpe': sharpe_ratio(engine_bt.get_step_returns()),
+        'sharpe': sharpe_ratio(engine_bt.get_step_returns(), n_ann=252*390),
         'mdd': max_drawdown(engine_bt.get_values_history()),
         'win_rate': win_rate(engine_bt.trade_returns),
         'decision_acc': decision_accuracy(actions_bt, y_test),
+        'profit_factor': profit_factor(engine_bt.trade_returns),
+        'turnover': turnover(actions_bt),
+        'avg_hold_time': average_holding_time(engine_bt.hold_durations),
+        'avg_trade_return': average_trade_return(engine_bt.trade_returns),
     }
 
     # Buy-and-hold benchmark
@@ -191,6 +239,8 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
         'lr_metrics': fold_results['lr_metrics'],
         'xgb_metrics': fold_results['xgb_metrics'],
         'mlp_metrics': fold_results['mlp_metrics'],
+        'xgb_trading': xgb_trading_metrics,
+        'mlp_trading': mlp_trading_metrics,
         'n_trades_no_bt': len(engine_no_bt.trade_returns),
         'n_trades_bt': len(engine_bt.trade_returns),
     }
@@ -204,5 +254,13 @@ def evaluate_fold(fold_idx, fold_results, results_dir='results'):
           f"Return: {bt_metrics['cum_return']:.6f}, "
           f"Sharpe: {bt_metrics['sharpe']:.4f}")
     print(f"    Buy-and-Hold Return:   {bh_return:.6f}")
+
+    # Diagnostics
+    print(f"    [Diagnostics] Mean(r_t): {np.mean(engine_bt.get_step_returns()):.8f}, "
+          f"Std(r_t): {np.std(engine_bt.get_step_returns()):.8f}")
+    print(f"    [Strategy Control] Turnover: {bt_metrics['turnover']:.4f}, "
+          f"ProfitFactor: {bt_metrics['profit_factor']:.2f}, "
+          f"AvgHold: {bt_metrics['avg_hold_time']:.1f} steps, "
+          f"AvgTradeRet: {bt_metrics['avg_trade_return']:.6f}")
 
     return eval_metrics

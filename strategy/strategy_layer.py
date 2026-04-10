@@ -1,115 +1,109 @@
 """
 Strategy Layer for the MoE framework.
 
-Converts the soft probability output P_final = [p_up, p_stat, p_down]
-into a discrete trading action using confidence margin filtering and
-class-specific thresholds.
+Probabilistic Magnitude Signal Model with cost-aware execution.
 
-Decision Rules:
-1. Confidence margin filter: margin = max(P) - second_max(P) > delta
-   If not satisfied, action = Hold.
-2. If margin passes:
-   - Buy  if y_hat == 0 (Up) and p_up > theta_buy
-   - Sell if y_hat == 2 (Down) and p_down > theta_sell
-   - Hold otherwise
+Key design: MINIMIZE round-trip trades. Only change position when the
+signal is strong enough to overcome transaction costs. The hysteresis
+band prevents churn. No aggressive Flat exits — only exit when the
+opposite signal is strong.
+
+State Machine:
+    signal = P(up) - P(down)
+
+    1. If signal > tau_entry AND P(up) > theta_buy     → Buy (Long)
+    2. If signal < -tau_entry AND P(down) > theta_sell  → Sell (Short)
+    3. If |signal| < tau_exit AND in position            → Flat (exit)
+    4. Otherwise                                         → Hold (maintain)
+
+    Flip penalty: reversals require |signal| > tau_entry + flip_penalty
 """
 
 import numpy as np
 
 
+from collections import deque
+
 class StrategyLayer:
     """
-    Strategy decision module with configurable thresholds.
-
-    Attributes
-    ----------
-    theta_buy : float
-        Minimum probability threshold for Buy actions.
-    theta_sell : float
-        Minimum probability threshold for Sell actions.
-    delta : float
-        Minimum confidence margin between top-two class probabilities.
+    Cost-aware magnitude signal strategy with hysteresis, flip penalty, and regime filter.
     """
 
-    def __init__(self, theta_buy=0.55, theta_sell=0.55, delta=0.10):
-        """
-        Initialize the strategy layer.
-
-        Parameters
-        ----------
-        theta_buy : float
-            Buy confidence threshold.
-        theta_sell : float
-            Sell confidence threshold.
-        delta : float
-            Minimum margin for directional trades.
-        """
+    def __init__(self, tau_entry=0.60, tau_exit=0.15,
+                 theta_buy=0.75, theta_sell=0.75,
+                 flip_penalty=0.10, s_lookback=20, s_threshold=0.55):
+        self.tau_entry = tau_entry
+        self.tau_exit = tau_exit
         self.theta_buy = theta_buy
         self.theta_sell = theta_sell
-        self.delta = delta
+        self.flip_penalty = flip_penalty
+        
+        self.s_lookback = s_lookback
+        self.s_threshold = s_threshold
+        self.s_history = deque(maxlen=s_lookback)
 
-    def decide(self, pfinal):
+    def decide(self, pfinal, current_position=None):
         """
-        Convert a single probability vector to a trading action.
+        Convert a probability vector to a trading action.
 
         Parameters
         ----------
         pfinal : np.ndarray, shape (3,)
             Final class probabilities [p_up, p_stationary, p_down].
+        current_position : str or None
+            Current engine position ('Long', 'Short', None).
 
         Returns
         -------
         action : str
-            One of 'Buy', 'Sell', or 'Hold'.
+            One of 'Buy', 'Sell', 'Flat', or 'Hold'.
         """
-        # Predicted class
-        y_hat = np.argmax(pfinal)
+        signal = pfinal[0] - pfinal[2]
+        abs_signal = abs(signal)
 
-        # Confidence margin filter
-        sorted_probs = np.sort(pfinal)[::-1]
-        margin = sorted_probs[0] - sorted_probs[1]
+        # Update rolling signal strength state
+        s_t = max(pfinal[0], pfinal[2])
+        self.s_history.append(s_t)
 
-        if margin <= self.delta:
-            return 'Hold'
-
-        # Class-specific threshold check
-        # Class 0 = Up -> Buy
-        if y_hat == 0 and pfinal[0] > self.theta_buy:
-            return 'Buy'
-        # Class 2 = Down -> Sell
-        elif y_hat == 2 and pfinal[2] > self.theta_sell:
-            return 'Sell'
+        # Check regime filter
+        if len(self.s_history) < self.s_lookback:
+            is_regime_valid = False  # Ensure window is warm before trading
         else:
-            return 'Hold'
+            avg_s = sum(self.s_history) / self.s_lookback
+            is_regime_valid = (avg_s > self.s_threshold)
 
-    def decide_batch(self, pfinal_batch):
-        """
-        Convert a batch of probability vectors to trading actions.
+        # --- 1. Strong entry/reversal zone ---
+        if abs_signal > self.tau_entry and is_regime_valid:
+            is_flip = (
+                (signal > 0 and current_position == 'Short') or
+                (signal < 0 and current_position == 'Long')
+            )
+            required = self.tau_entry + self.flip_penalty if is_flip else self.tau_entry
 
-        Parameters
-        ----------
-        pfinal_batch : np.ndarray, shape (n_samples, 3)
+            if abs_signal > required:
+                if signal > 0 and pfinal[0] > self.theta_buy:
+                    return 'Buy'
+                if signal < 0 and pfinal[2] > self.theta_sell:
+                    return 'Sell'
 
-        Returns
-        -------
-        actions : list of str
-            List of 'Buy', 'Sell', or 'Hold' for each sample.
-        """
-        return [self.decide(pfinal_batch[i]) for i in range(len(pfinal_batch))]
+        # --- 2. Weak signal exit (only if in a position) ---
+        # Use a TIGHT exit threshold to avoid churning
+        if abs_signal < self.tau_exit and current_position is not None:
+            return 'Flat'
+
+        # --- 3. Hysteresis: maintain current state ---
+        return 'Hold'
+
+    def decide_batch(self, pfinal_batch, positions=None):
+        """Convert a batch of probability vectors to trading actions."""
+        if positions is None:
+            positions = [None] * len(pfinal_batch)
+        return [self.decide(pfinal_batch[i], positions[i])
+                for i in range(len(pfinal_batch))]
 
     def update_thresholds(self, theta_buy=None, theta_sell=None, delta=None):
-        """
-        Update the strategy thresholds.
-
-        Parameters
-        ----------
-        theta_buy : float or None
-        theta_sell : float or None
-        delta : float or None
-        """
+        """Update thresholds (kept for backtracking compatibility)."""
         if theta_buy is not None:
-            self.theta_buy = np.clip(theta_buy, 0.45, 0.85)
+            self.theta_buy = np.clip(theta_buy, 0.50, 0.90)
         if theta_sell is not None:
-            self.theta_sell = np.clip(theta_sell, 0.45, 0.85)
-        if delta is not None:
-            self.delta = np.clip(delta, 0.45, 0.85)
+            self.theta_sell = np.clip(theta_sell, 0.50, 0.90)

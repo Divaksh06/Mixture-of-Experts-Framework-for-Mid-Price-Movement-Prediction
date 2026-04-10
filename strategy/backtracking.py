@@ -43,10 +43,10 @@ class BacktrackingModule:
         Current margin threshold.
     """
 
-    def __init__(self, initial_weights=None, theta_buy=0.55, theta_sell=0.55,
-                 delta=0.10, N_buf=100, N_upd=50, epsilon_theta=0.02,
+    def __init__(self, initial_weights=None, theta_buy=0.70, theta_sell=0.70,
+                 delta=0.15, N_buf=100, N_upd=50, epsilon_theta=0.02,
                  tau_FP=0.15, tau_FN=0.10, theta_reverse=0.70,
-                 error_margin=0.05):
+                 error_margin=0.05, lambda_ema=0.9, eta_lr=0.1):
         """
         Initialize the backtracking module.
 
@@ -76,6 +76,10 @@ class BacktrackingModule:
             Tolerance for treating a prediction as correct (default 0.05).
             A prediction is considered correct if
             |prediction - true_label| <= error_margin.
+        lambda_ema : float
+            EMA smoothing factor for accuracy tracking.
+        eta_lr : float
+            Learning rate for weight exponential update.
         """
         if initial_weights is not None:
             self.expert_weights = np.array(initial_weights, dtype=np.float64)
@@ -93,6 +97,9 @@ class BacktrackingModule:
         self.tau_FN = tau_FN
         self.theta_reverse = theta_reverse
         self.error_margin = error_margin
+        self.lambda_ema = lambda_ema
+        self.eta_lr = eta_lr
+        self.historical_alpha = np.array([1.0 / 3, 1.0 / 3, 1.0 / 3], dtype=np.float64)
 
         # Buffer stores tuples: (y_pred, pfinal, action, y_true, expert_preds)
         self.buffer = deque(maxlen=N_buf)
@@ -159,15 +166,19 @@ class BacktrackingModule:
                         if abs(obs['expert_preds'][e_idx] - obs['y_true']) <= self.error_margin:
                             expert_correct[e_idx] += 1
 
-            alpha = np.zeros(3)
+            alpha_hat = np.zeros(3)
             for e_idx in range(3):
                 if expert_total[e_idx] > 0:
-                    alpha[e_idx] = expert_correct[e_idx] / expert_total[e_idx]
+                    alpha_hat[e_idx] = expert_correct[e_idx] / expert_total[e_idx]
                 else:
-                    alpha[e_idx] = 1.0 / 3
+                    alpha_hat[e_idx] = 1.0 / 3
+            
+            # EMA of accuracy
+            self.historical_alpha = (self.lambda_ema * self.historical_alpha 
+                                     + (1 - self.lambda_ema) * alpha_hat)
 
-            # w'_i = (w_i * alpha_i) / sum(w_j * alpha_j)
-            numerator = self.expert_weights * alpha
+            # Exponential update: w'_i = w_i * exp(eta * alpha_i) / sum
+            numerator = self.expert_weights * np.exp(self.eta_lr * self.historical_alpha)
             denom = numerator.sum()
             if denom > 0:
                 self.expert_weights = numerator / denom

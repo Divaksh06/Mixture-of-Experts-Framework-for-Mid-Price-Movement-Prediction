@@ -34,7 +34,7 @@ class BacktestEngine:
         History of actions taken.
     """
 
-    def __init__(self, initial_capital=10000.0, transaction_cost=0.0001):
+    def __init__(self, initial_capital=10000.0, transaction_cost=0.0001, c_spread=0.00015, hold_k=25):
         """
         Initialize the backtesting engine.
 
@@ -44,20 +44,29 @@ class BacktestEngine:
             Starting capital.
         transaction_cost : float
             Proportional transaction cost per side.
+        c_spread : float
+            Fixed assumed spread cost for transaction realism.
+        hold_k : int
+            Minimum number of ticks a position must be held once opened.
         """
         self.initial_capital = initial_capital
         self.transaction_cost = transaction_cost
+        self.c_spread = c_spread
+        self.hold_k = hold_k
         self.reset()
 
     def reset(self):
         """Reset the engine to initial state."""
         self.portfolio_value = self.initial_capital
-        self.position_open = False
+        self.position = None  # None, 'Long', or 'Short'
         self.entry_value = 0.0
         self.values = [self.initial_capital]
         self.trade_returns = []
         self.actions_taken = []
         self.step_returns = []
+        self.hold_k_counter = 0
+        self.hold_durations = []
+        self.current_trade_duration = 0
 
     def step(self, action, mid_price_return):
         """
@@ -66,36 +75,63 @@ class BacktestEngine:
         Parameters
         ----------
         action : str
-            Trading action: 'Buy', 'Sell', or 'Hold'.
+            Trading action: 'Buy', 'Sell', 'Flat', or 'Hold'.
         mid_price_return : float
             Realized one-step return r_t = (m_{t+1} - m_t) / m_t.
         """
+        # --- 1. Minimum holding lockout (hold_k) ---
+        if self.hold_k_counter > 0:
+            self.hold_k_counter -= 1
+            action = 'Hold'   # Override to maintain state
+            
         self.actions_taken.append(action)
+        
+        # Decide Target Position
+        if action == 'Buy':
+            target_pos = 'Long'
+        elif action == 'Sell':
+            target_pos = 'Short'
+        elif action == 'Flat':
+            target_pos = None
+        else: # 'Hold' -> maintain position
+            target_pos = self.position
+
+        c_total = self.transaction_cost + self.c_spread
+
+        # Execute transitions (pay swap/crossing costs)
+        if self.position != target_pos:
+            # We must close current position if we have one
+            if self.position is not None:
+                self.portfolio_value *= (1.0 - c_total)
+                if self.entry_value > 0:
+                    trade_ret = (self.portfolio_value - self.entry_value) / self.entry_value
+                    self.trade_returns.append(trade_ret)
+                    self.hold_durations.append(self.current_trade_duration)
+
+            # We open the new position if target is not None
+            if target_pos is not None:
+                self.portfolio_value *= (1.0 - c_total)
+                self.entry_value = self.portfolio_value
+                self.current_trade_duration = 0
+
+            # Cooldown on ALL transitions (including exit to Flat)
+            self.hold_k_counter = self.hold_k
+            
+            self.position = target_pos
+
+        # Apply return corresponding to the CURRENT held position during t -> t+1
         step_ret = 0.0
-
-        if action == 'Buy' and not self.position_open:
-            # Open long position, pay transaction cost
-            self.portfolio_value *= (1.0 - self.transaction_cost)
-            self.position_open = True
-            self.entry_value = self.portfolio_value
-
-        elif action == 'Sell' and self.position_open:
-            # Apply the return first, then close with transaction cost
-            self.portfolio_value *= (1.0 + mid_price_return)
-            self.portfolio_value *= (1.0 - self.transaction_cost)
-            self.position_open = False
-            # Record trade return
-            if self.entry_value > 0:
-                trade_ret = (self.portfolio_value - self.entry_value) / self.entry_value
-                self.trade_returns.append(trade_ret)
-            step_ret = mid_price_return - self.transaction_cost
-
-        elif self.position_open:
-            # Position is open and action is Hold (or Buy while already in)
+        if self.position == 'Long':
             self.portfolio_value *= (1.0 + mid_price_return)
             step_ret = mid_price_return
+        elif self.position == 'Short':
+            self.portfolio_value *= (1.0 - mid_price_return)
+            step_ret = -mid_price_return
 
-        # If no position and Hold or Sell, no change
+        # Track active hold period length
+        if self.position is not None:
+            self.current_trade_duration += 1
+
         self.values.append(self.portfolio_value)
         self.step_returns.append(step_ret)
 
@@ -108,10 +144,18 @@ class BacktestEngine:
         mid_price_return : float
             Final return for closing.
         """
-        if self.position_open:
+        c_total = self.transaction_cost + self.c_spread
+        if self.position == 'Long':
             self.portfolio_value *= (1.0 + mid_price_return)
-            self.portfolio_value *= (1.0 - self.transaction_cost)
-            self.position_open = False
+            self.portfolio_value *= (1.0 - c_total)
+            self.position = None
+            if self.entry_value > 0:
+                trade_ret = (self.portfolio_value - self.entry_value) / self.entry_value
+                self.trade_returns.append(trade_ret)
+        elif self.position == 'Short':
+            self.portfolio_value *= (1.0 - mid_price_return)
+            self.portfolio_value *= (1.0 - c_total)
+            self.position = None
             if self.entry_value > 0:
                 trade_ret = (self.portfolio_value - self.entry_value) / self.entry_value
                 self.trade_returns.append(trade_ret)

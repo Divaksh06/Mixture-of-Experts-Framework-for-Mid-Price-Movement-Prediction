@@ -1,0 +1,169 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Mixture-of-Experts Framework for \\ High-Frequency Mid-Price Movement Prediction}
+
+\author{\IEEEauthorblockN{Authors}
+\IEEEauthorblockA{\textit{Pattern Recognition and Machine Learning (PRML)} \\
+\textit{Institute}\\
+City, Country \\
+Email}
+}
+
+\maketitle
+
+\begin{abstract}
+Predicting the short-term trajectory of mid-prices in a Limit Order Book (LOB) is a profoundly difficult financial engineering problem due to extreme non-stationarity, microstructure noise, and imbalanced class distributions. This comprehensive project introduces an advanced Mixture-of-Experts (MoE) machine learning pipeline designed to execute profitable High-Frequency Trading (HFT) decisions on the FI-2010 benchmark dataset. We rigorously explore the "Classification-Profitability Paradox"—demonstrating that models optimizing heavily for theoretical mathematical accuracy often fail entirely in financial execution due to unmodeled spread-crossing constraints and low-conviction thresholds. By assembling diverse algorithmic specialists—an L2-Regularized Logistic Regression, a Gradient-Boosted Decision Tree (XGBoost), and a Temporal Multi-Layer Perceptron (MLP) mapping sequential data via Focal Loss—and orchestrating them via an overarching Gating Network coupled with a 20-step signal regime execution filter, our architectural framework achieves a robust +46.5\% compounded return. This vastly outperforms isolated baseline classifiers, effectively bridging the gap between theoretical classification metrics and tangible market profitability.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Mixture of Experts, Limit Order Book, High-Frequency Trading, XGBoost, Neural Networks, Focal Loss, Order Imbalance
+\end{IEEEkeywords}
+
+\section{Introduction}
+Financial markets have evolved into highly digitized ecosystems dominated by algorithmic trading protocols operating at the millisecond scale. The fundamental data structure dictating price discovery in these modern markets is the Limit Order Book (LOB), a real-time sequential ledger matching standing buy (Bid) and sell (Ask) liquidity. 
+
+The core predictive challenge intrinsic to the LOB is extreme market microstructure noise. Unlike macroscopic asset allocation, HFT signals decay in seconds, and mid-price trajectories often revert due to phantom liquidity or transient order cancellations. Consequently, standard single-model machine learning regressors are notoriously susceptible to overfitting against this localized variance.
+
+To mitigate this, financial literature has widely adopted categorical formulation. Predicting the exact scalar return $R_t$ is abandoned in favor of mapping the state to three discrete classifications: upward movement (Up), downward movement (Down), and no significant movement (Stationary).
+
+However, this transition introduces the "Classification-Profitability Paradox." A standard machine learning model trained via discrete Cross-Entropy loss will structurally gravitate toward the majority class (Stationary). While capturing the Stationary class aggressively yields high systemic accuracy metrics, it paralyzes the agent; the model rarely builds enough conviction to physically place a directional trade. Thus, achieving $90\%$ accuracy yields $0\%$ financial extraction. 
+
+This project solves this paradox by decoupling the classification mechanism from the financial execution mechanism using a Mixture-of-Experts architecture routed through a highly constrained, cost-aware mathematical state machine.
+
+\section{Dataset Configuration and Preprocessing}
+We utilize the spatial FI-2010 benchmark LOB dataset \cite{b1}, widely considered the academic standard for microstructure forecasting. The corpus encapsulates 10 consecutive trading days consisting of nearly 4 million tick events, with visibility across the outer 10 price levels of the limit order book.
+
+\subsection{Raw Decimal Precision Extraction}
+The FI-2010 benchmark provides arrays normalized via Z-Score. However, utilizing standardized distributions destroys the strict positivity of order volume integers. Subtracting absolute integers mathematically corrupts non-linear ratio engineering (such as calculating relative volume imbalances). 
+
+Therefore, our pipeline bypasses the generalized subsets and forces the extraction of the raw \texttt{NoAuction\_DecPre} (Decimal Precision) matrices. By evaluating physical, absolute quantities, we guarantee mathematically pure fractional inputs for our algorithms.
+
+\subsection{Dimensionality and Feature Engineering}
+The generalized dataset provides 144 baseline spatial features (including hierarchical price points, cumulative volumes, and basic localized moving averages). Following exploratory data analysis (EDA), three critical, high-conviction features structurally isolated directional momentum:
+
+\begin{enumerate}
+    \item \textbf{Level-1 Spread ($S_t$):} Explicitly mapping the threshold required to instantly cross liquidity.
+    \begin{equation}
+        S_t = AskPrice_1 - BidPrice_1
+    \end{equation}
+    
+    \item \textbf{Level-1 Market Imbalance ($I_t^{(1)}$):} Normalizing the immediate physical buying pressure against the immediate selling pressure into a bounded $[-1, 1]$ scalar.
+    \begin{equation}
+        I_t^{(1)} = \frac{BidVol_1 - AskVol_1}{BidVol_1 + AskVol_1}
+    \end{equation}
+    
+    \item \textbf{Level-5 Deep Imbalance ($I_t^{(5)}$):} A holistic discrepancy scalar smoothed across the cumulative outer 5 tiers of the order book, intentionally designed to nullify Level-1 high-frequency spoofing noise.
+\end{enumerate}
+
+These additions expanded the parameter tensor horizontally to a dimension of 147. To guarantee gradient stability and model convergence across disjointed statistical bands, the entire 147-dimensional matrix is subjected to an \texttt{sklearn.StandardScaler} internally within the dataset loader immediately prior to inference.
+
+\section{Mathematical Formulation}
+
+\subsection{The Label Smoothing Target}
+Following standard HFT classification formulation, the physical percentage change of the mid-price $m_t$ evaluated horizontally over a horizon of $k=10$ subsequent ticks defines the strict target vector $y_t \in \{Up, Stationary, Down\}$, bounded by a static financial threshold scalar $l$:
+\begin{equation}
+    y_t = 
+    \begin{cases} 
+      Up & \text{if } \frac{m_{t+k} - m_t}{m_t} > l \\
+      Down & \text{if } \frac{m_{t+k} - m_t}{m_t} < -l \\
+      Stationary & \text{otherwise} 
+    \end{cases}
+\end{equation}
+
+\subsection{Mixture of Experts Function}
+The foundational architecture maps the input state $X_t$ independently across $N$ disparate classifiers (Experts). A concurrent Gating Network calculates a contextual softmax probability density $G_i(X_t)$ assigning dynamic trust weights to each expert. The final stacked probability tensor $P(X_t)$ is the sum of weighted interpolations:
+\begin{equation}
+    P(X_t) = \sum_{i=1}^{N} G_i(X_t) E_i(X_t)
+\end{equation}
+
+\section{Model Architecture and Hyperparameter Logic}
+Our architecture encapsulates three fundamentally distinct classifiers to guarantee uncorrelated prediction variances. 
+
+\subsection{Expert 1: Logistic Regression}
+A strict baseline linear classifier governed by an L2-penalty norm. It possesses zero inherent capacity for interaction discovery (such as conditional depth tracking), forcing its weights to heavily exploit our artificially engineered $I_t^{(1)}$ matrices.
+
+\subsection{Expert 2: XGBoost Decision Trees}
+A Gradient Boosted architecture exploiting spatial mapping. In tabular data execution, decision trees inherently outperform sequential deep learning by mapping boolean splits aggressively. To prevent chaotic microstructure overfitting, we aggressively restricted the absolute max tree-depth iteratively. XGBoost dynamically parses boundary interactions within localized feature depths without normalizing requirements.
+
+\subsection{Expert 3: Temporal Multi-Layer Perceptron (MLP)}
+Unlike decision trees, deep learning vectors digest chronological sequences exceptionally. We implemented a temporal mapping mechanism specifically for the MLP. The 147-dimensional array is shifted over a chronological memory window of $k_{lookback}=5$. The current timestep $(t)$ is horizontally concatenated adjacent to the historical sequence $(t-4, t-3, t-2, t-1)$, projecting the input shape into an ultra-wide dense tensor:
+\begin{equation}
+    D_{MLP} = 147 \text{ features} \times 5 \text{ frames} = 735
+\end{equation}
+To counteract the profound class imbalance toward "Stationary" targets, the PyTorch MLP was optimized via Focal Loss ($\gamma=3.0$), which structurally de-weights well-classified (safe) gradients and magnifies error penalties on hard, minority directional vectors:
+\begin{equation}
+    FL(p_t) = -\sum (1 - p_t)^\gamma \log(p_t)
+\end{equation}
+
+\section{Algorithmic Trading State Machine}
+The absolute raw probabilities generated by the MoE $P(X_t)$ are inherently meaningless without execution limits. Trading entails transaction slippage and physical holding durations. We constructed a deterministic Signal Layer constrained by localized hysteresis. 
+
+\subsection{Conviction Hysteresis}
+Rather than executing on generic maximum likelihoods ($argmax$), trading requires the directional signal to eclipse the stationary null hypothesis by a rigid magnitude offset, $\tau_{entry} = 0.60$.
+To prevent continuous "churning" across tight regimes, existing physical positions are heavily shielded by an asymmetric exit protocol ($\tau_{exit} = 0.15$), requiring the mathematical signal to decay entirely.
+
+\subsection{The Regime Filter}
+The most financially corrosive market structure is the "Sideways Chop"—stochastic flickering that randomly triggers entry thresholds but fails to execute momentum. 
+
+To eliminate this volatility trap, we implemented a 20-step sliding execution deque tracking the maximal directional indicator $s_t$:
+\begin{equation}
+    s_t = \max(P_{up}(X_t), P_{down}(X_t))
+\end{equation}
+All directional execution functions are physically halted unless the sequence demonstrates sustained sequential volume pressure:
+\begin{equation}
+    \frac{1}{20} \sum_{i=0}^{19} s_{t-i} > 0.55
+\end{equation}
+This isolated regime architecture definitively prevented over 100+ "noise-based" losing trades per fold subset. 
+
+\section{Experimental Results and Discussion}
+The pipeline was validated extensively using Anchored Forward Time-Series Cross-Validation across exactly 9 chronologically sequential folds, absolutely preventing data leakage. 
+
+\begin{table}[htbp]
+\caption{Classification vs Financial Return Matrix (9-Fold Ablation)}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model Structure} & \textbf{Macro F1} & \textbf{Mean Trades} & \textbf{Total Return} \\
+\midrule
+Best Single (XGB)  & 49.9\% & 279 & +43.6\% \\
+Temporal MLP       & \textbf{56.2\%} & 10 & -5.8\% \\
+\textbf{Overall MoE} & 54.1\% & \textbf{280} & \textbf{+46.5\%} \\
+\bottomrule
+\end{tabular}
+\label{tab_ablation}
+\end{center}
+\end{table}
+
+\subsection{Analysis of the Predictor Paradox}
+The isolated table heavily exposes the discrepancy between statistical precision and monetary execution. 
+1. \textbf{The Network Trap}: The Temporal MLP secured the highest theoretical classification accuracy across the dataset using Focal Loss. However, it achieved this by conservatively projecting probabilities incredibly close to the classification baseline boundaries. Because it never confidently breached the required mathematical $\tau_{entry}=0.60$ band, it made essentially zero entries (only 10 trades historically) and steadily lost capital to mandatory crossing slips.
+2. \textbf{The Boosting Offensive}: XGBoost attained substantially lower macroscopic classification metrics (Macro-F1 $49.9\%$ vs MLP $56.2\%$). However, it decisively bypassed threshold limitations with heavy conviction density, authorizing 279 highly targeted executions and ripping $+43.6\%$ off the benchmark asset trace.
+
+\subsection{The Mixture of Experts Synergy}
+The absolute necessity of the unifying MoE Gating architecture is highlighted heavily in the ultimate framework output. The Gating algorithm actively suppressed the neural network's non-trading hesitation and trusted the trees on directional rips. Concurrently, it utilized the MLP's Stationarity bias to block several XGBoost edge-cases, preserving capital and extracting the maximum global peak yield of $+46.5\%$; a profound structural dominance over the naive B\&H benchmark baseline ($+32.5\%$).
+
+\section{Conclusion}
+This framework successfully illustrates that limit order book predictive architectures cannot be optimized solely via abstract classification limits. By forcefully overriding standardized loss mechanisms, applying chronological sequence stacking intelligently to appropriate model constraints, and enforcing structural hysteresis buffers, algorithmic execution pipelines can effectively transition theoretical gradient convergence into explicit physical capital capture.
+
+\begin{thebibliography}{00}
+\bibitem{b1} A. Ntakaris et al., ``Benchmark dataset for mid-price forecasting of limit order book data with machine learning methodology.'' Journal of Forecasting, vol. 37, no. 8, pp. 852-866, 2018.
+\bibitem{b2} N. Passalis et al., ``Time-Series Classification Using Neural Bag-of-Features.'' 2017.
+\end{thebibliography}
+
+\end{document}

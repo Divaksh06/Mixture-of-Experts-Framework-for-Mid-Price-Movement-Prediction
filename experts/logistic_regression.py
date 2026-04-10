@@ -62,10 +62,10 @@ class LRExpert:
                 max_iter=1000,
                 class_weight=cw_dict,
                 random_state=42,
-                n_jobs=-1
+                n_jobs=None
             )
             scores = cross_val_score(
-                lr, X, y, cv=skf, scoring='f1_macro', n_jobs=-1
+                lr, X, y, cv=skf, scoring='f1_macro', n_jobs=None
             )
             mean_score = scores.mean()
             if mean_score > best_score:
@@ -81,7 +81,7 @@ class LRExpert:
             max_iter=1000,
             class_weight=cw_dict,
             random_state=42,
-            n_jobs=-1
+            n_jobs=None
         )
         self.model.fit(X, y)
 

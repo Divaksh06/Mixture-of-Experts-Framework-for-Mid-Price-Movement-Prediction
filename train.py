@@ -4,8 +4,9 @@ Training Pipeline (Stages 1–3) for the MoE framework.
 Stage 1: Train each expert independently on the training data.
 Stage 2: Generate cross-validated stacked probabilities from experts.
 Stage 3: Train the gating network on the stacked probabilities.
+Stage 3b: Train a lightweight secondary LR on k=5 horizon for
+          multi-horizon agreement filtering.
 
-Currently configured to train on a single file (NoAuction_ZScore_CF_1).
 All trained models and probabilities are saved to results/fold_{t}/.
 """
 
@@ -44,36 +45,29 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
         Dictionary containing trained models, expert metrics,
         and generated probabilities.
     """
-    # ----------------------------------------------------------------
-    # ORIGINAL: Multi-fold loading header
-    # ----------------------------------------------------------------
-    # print(f"\n{'='*60}")
-    # print(f"  Fold {fold_idx}/9: Loading data...")
-    # print(f"{'='*60}")
-    # ----------------------------------------------------------------
-
-    # SINGLE FILE: Loading header
     print(f"\n{'='*60}")
-    print(f"  NoAuction_ZScore_CF_1: Loading data...")
+    print(f"  Fold {fold_idx}: Loading data...")
     print(f"{'='*60}")
 
-    # Load data
-    X_train, y_train, X_test, y_test, class_weights = load_fold(
+    # Load data (now includes k=5 horizon labels)
+    X_train, y_train, X_test, y_test, class_weights, y_train_k5, y_test_k5 = load_fold(
         fold_idx, dataset_root, normalization
     )
+
+    # Use balanced class weights from sklearn directly.
+    # Trade filtering is handled by the signal-based strategy layer (tau thresholds),
+    # so we do NOT artificially reweight here — that would destroy expert accuracy.
+
     print(f"  Train: {X_train.shape[0]} samples, Test: {X_test.shape[0]} samples")
     print(f"  Class distribution (train): {np.bincount(y_train, minlength=3)}")
-    print(f"  Class weights: {class_weights}")
+    print(f"  Class weights (balanced): {class_weights}")
 
     # Create output directory
     fold_dir = os.path.join(results_dir, f'fold_{fold_idx}')
     os.makedirs(fold_dir, exist_ok=True)
 
     # ========== Stage 1: Independent Expert Training ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 1 — Training experts...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 1 — Training experts...")
+    print(f"\n  Fold {fold_idx}: Stage 1 — Training experts...")
 
     # Train LR
     print(f"    Training Logistic Regression...")
@@ -101,10 +95,7 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
           f"Macro-F1: {mlp_metrics['macro_f1']:.4f}")
 
     # ========== Stage 2: Expert Probability Generation ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 2 — Generating stacked probabilities...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 2 — Generating stacked probabilities...")
+    print(f"\n  Fold {fold_idx}: Stage 2 — Generating stacked probabilities...")
 
     # Generate cross-validated probabilities on training data
     # to avoid overfitting when training the gating network
@@ -142,10 +133,7 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     stacked_train = get_stacked_probs(train_probs_lr, train_probs_xgb, train_probs_mlp)
 
     # ========== Stage 3: Gating Network Training ==========
-    # ----------------------------------------------------------------
-    # ORIGINAL: print(f"\n  Fold {fold_idx}/9: Stage 3 — Training gating network...")
-    # ----------------------------------------------------------------
-    print(f"\n  NoAuction_ZScore_CF_1: Stage 3 — Training gating network...")
+    print(f"\n  Fold {fold_idx}: Stage 3 — Training gating network...")
 
     gating_trainer = GatingTrainer()
     gating_trainer.fit(

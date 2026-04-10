@@ -27,7 +27,7 @@ def cumulative_return(values):
     return (values[-1] - values[0]) / values[0]
 
 
-def sharpe_ratio(returns, n_ann=252 * 390, rf=0.0):
+def sharpe_ratio(returns, n_ann=1, rf=0.0):
     """
     Compute annualized Sharpe ratio.
 
@@ -146,3 +146,46 @@ def buy_and_hold_return(mid_price_returns):
         return 0.0
     cumulative = np.prod(1.0 + np.array(mid_price_returns)) - 1.0
     return float(cumulative)
+
+
+def profit_factor(trade_returns):
+    """
+    Compute Profit Factor: Gross Profit / Gross Loss.
+    """
+    trade_returns = np.array(trade_returns)
+    if len(trade_returns) == 0:
+        return 0.0
+    gross_profit = np.sum(trade_returns[trade_returns > 0])
+    gross_loss = np.abs(np.sum(trade_returns[trade_returns < 0]))
+    if gross_loss == 0:
+        return float('inf') if gross_profit > 0 else 0.0
+    return float(gross_profit / gross_loss)
+
+
+def turnover(actions):
+    """
+    Compute total transaction count turnover roughly based on action switches.
+    Number of entry/exit actions over total dataset length.
+    """
+    if len(actions) == 0:
+        return 0.0
+    trades = sum(1 for a in actions if a in ['Buy', 'Sell'])
+    return trades / len(actions)
+
+
+def average_holding_time(hold_durations):
+    """
+    Compute the average number of ticks a position was held.
+    """
+    if not hold_durations:
+        return 0.0
+    return float(np.mean(hold_durations))
+
+
+def average_trade_return(trade_returns):
+    """
+    Compute the average return per completed trade.
+    """
+    if not trade_returns:
+        return 0.0
+    return float(np.mean(trade_returns))

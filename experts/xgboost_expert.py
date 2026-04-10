@@ -8,6 +8,7 @@ are tuned via 3-fold stratified cross-validation on training data.
 
 import numpy as np
 import xgboost as xgb
+import torch
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score, accuracy_score, classification_report
 
@@ -49,8 +50,8 @@ class XGBExpert:
         else:
             sample_weights = None
 
-        max_depth_candidates = [3, 5, 7]
-        lr_candidates = [0.05, 0.1, 0.2]
+        max_depth_candidates = [3, 4, 5]
+        lr_candidates = [0.01, 0.05, 0.1]
 
         best_score = -1.0
         best_params = {'max_depth': 5, 'learning_rate': 0.1}
@@ -70,7 +71,7 @@ class XGBExpert:
                         sw_tr = None
 
                     clf = xgb.XGBClassifier(
-                        n_estimators=200,
+                        n_estimators=500,
                         max_depth=md,
                         learning_rate=lr,
                         subsample=0.8,
@@ -81,6 +82,8 @@ class XGBExpert:
                         use_label_encoder=False,
                         random_state=42,
                         n_jobs=-1,
+                        tree_method='hist',
+                        device='cuda' if torch.cuda.is_available() else 'cpu',
                         verbosity=0
                     )
                     clf.fit(
@@ -102,7 +105,7 @@ class XGBExpert:
 
         # Retrain on full training data with best params
         self.model = xgb.XGBClassifier(
-            n_estimators=200,
+            n_estimators=500,
             max_depth=best_params['max_depth'],
             learning_rate=best_params['learning_rate'],
             subsample=0.8,
@@ -113,6 +116,8 @@ class XGBExpert:
             use_label_encoder=False,
             random_state=42,
             n_jobs=-1,
+            tree_method='hist',
+            device='cuda' if torch.cuda.is_available() else 'cpu',
             verbosity=0
         )
         self.model.fit(X, y, sample_weight=sample_weights, verbose=False)
