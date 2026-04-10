@@ -132,12 +132,18 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
 
     stacked_train = get_stacked_probs(train_probs_lr, train_probs_xgb, train_probs_mlp)
 
+    # Normalize concatenated features for the gating network
+    from sklearn.preprocessing import StandardScaler
+    gating_scaler = StandardScaler()
+    gate_input_train = np.hstack([X_train, stacked_train])
+    gate_input_train = gating_scaler.fit_transform(gate_input_train)
+
     # ========== Stage 3: Gating Network Training ==========
     print(f"\n  Fold {fold_idx}: Stage 3 — Training gating network...")
 
     gating_trainer = GatingTrainer()
     gating_trainer.fit(
-        stacked_probs=stacked_train,
+        stacked_probs=gate_input_train,
         expert_probs_list=[train_probs_lr, train_probs_xgb, train_probs_mlp],
         y=y_train,
         batch_size=256,
@@ -150,8 +156,12 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
     test_probs_mlp = mlp_expert.predict_proba(X_test)
     stacked_test = get_stacked_probs(test_probs_lr, test_probs_xgb, test_probs_mlp)
 
+    # Apply same scaler to test inputs
+    gate_input_test = np.hstack([X_test, stacked_test])
+    gate_input_test = gating_scaler.transform(gate_input_test)
+
     # Get gating weights for test data
-    test_weights = gating_trainer.get_weights(stacked_test)
+    test_weights = gating_trainer.get_weights(gate_input_test)
 
     # Compute MoE final predictions on test
     from moe.mixture import compute_pfinal
@@ -170,6 +180,7 @@ def train_fold(fold_idx, dataset_root, normalization='NoAuction_Zscore',
         'xgb_expert': xgb_expert,
         'mlp_expert': mlp_expert,
         'gating_trainer': gating_trainer,
+        'gating_scaler': gating_scaler,
         'X_test': X_test,
         'y_test': y_test,
         'test_probs_lr': test_probs_lr,

@@ -40,7 +40,9 @@ class GatingNetwork(nn.Module):
         super(GatingNetwork, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, num_experts)
         )
 
@@ -131,7 +133,7 @@ class GatingTrainer:
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
 
         self.model.train()
         for epoch in range(epochs):

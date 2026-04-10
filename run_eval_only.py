@@ -57,6 +57,21 @@ def main():
 
     # ========== Stage 5: Aggregation with Statistical Rigor ==========
     from scipy.stats import ttest_rel, spearmanr
+    import sys
+
+    class Tee:
+        def __init__(self, *files):
+            self.files = files
+        def write(self, obj):
+            for f in self.files:
+                f.write(obj)
+                f.flush()
+        def flush(self):
+            for f in self.files:
+                f.flush()
+
+    log_file = open(os.path.join(RESULTS_DIR, "aggregated_metrics.txt"), "w")
+    sys.stdout = Tee(sys.stdout, log_file)
 
     print("\n" + "=" * 70)
     print("  STAGE 5: AGGREGATED RESULTS ACROSS ALL FOLDS")
@@ -174,9 +189,10 @@ def main():
 
     print(f"\n  Total evaluation time: {total_time:.1f}s")
     print("=" * 70)
-    print("  Evaluation complete.")
+    print(f"  Evaluation complete. Results saved to {os.path.join(RESULTS_DIR, 'aggregated_metrics.txt')}")
     print("=" * 70)
 
+    log_file.close()
 
 if __name__ == '__main__':
     main()
