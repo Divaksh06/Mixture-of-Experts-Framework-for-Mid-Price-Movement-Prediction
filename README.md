@@ -231,7 +231,7 @@ A lightweight neural network (144→64→3, softmax output) learns to assign inp
 
 Converts the final probability vector into a trading action using:
 - **Conviction Hysteresis**: Rejects weak trades by enforcing $\tau_{entry}=0.60$ and $\tau_{exit}=0.15$.
-- **Signal Regime Filter**: A 20-step rolling queue ($avg\_s_t > 0.55$) inherently blocking stochastic sideways market chop.
+- **Signal Regime Filter**: A 20-step rolling queue ($\bar{s}_t > 0.55$) inherently blocking stochastic sideways market chop.
 
 ### Backtracking Module
 
