@@ -1,25 +1,18 @@
-# Mixture of Experts Framework for Mid-Price Movement Prediction
+# Mixture-of-Experts Framework for Mid-Price Movement Prediction
+ 
+**Dataset:** FI-2010 Benchmark LOB Dataset  
+**Task:** 3-class mid-price movement prediction (Up / Stationary / Down) with trading strategy generation, backtracking, and backtesting
 
-This repository implements an advanced **Mixture-of-Experts (MoE)** machine learning pipeline designed to predict short-term mid-price movements within the FI-2010 High-Frequency Trading (HFT) Limit Order Book (LOB) dataset.
+---
 
-Unlike traditional classifiers that maximize theoretical accuracy formulas (which helplessly favor "Stationary" predictions without ever extracting capital), this project routes localized models through an automated gating network and a mathematical algorithmic trading state machine to translate probabilities into compounding profit.
+## Project Description
 
-## 🧠 Model Architecture
+This project implements a **Mixture-of-Experts (MoE)** framework for predicting short-term mid-price movements from high-frequency limit order book (LOB) data. Three expert classifiers — Logistic Regression, XGBoost, and a Multi-Layer Perceptron — are combined via a learned gating network that adaptively weights each expert based on the input market state.
 
-The framework decouples statistical capability from financial execution constraints using a localized structure:
-
-### 1. The Expert Models
-- **Expert 1: Logistic Regression:** A baseline linear architecture designed to exclusively bind against mathematically engineered momentum ratios.
-- **Expert 2: XGBoost:** Gradient-boosted sequence trees utilizing shallow leaf boundaries to dynamically capture spatial tabular interactions without overfitting microstructure noise.
-- **Expert 3: Temporal PyTorch MLP:** A dense multi-layer perceptron utilizing localized chronological `lookback=5` feature mapping across 735 dimensions. It explicitly trains on an asymmetrical `FocalLoss` derivative to penalize stationary guessing.
-
-### 2. MoE Gating Network
-A centralized probability matrix utilizing a Softmax router to dictate trust scales dynamically across the three experts depending on the specific state of the order book.
-
-### 3. Financial Strategy State Machine
-A latency-simulating trading engine translating algorithmic predictions into physical executed positions:
-- **Hysteresis Band:** Uses explicit $\tau_{entry}=0.60$ and $\tau_{exit}=0.15$ constraints to filter weak-probability executions.
-- **Regime Filter:** A structural 20-step rolling tracking queue (`s_avg > 0.55`) that mathematically locks the engine from triggering inside stochastic "sideways" market traps, eliminating hundreds of losing noise-based trades.
+The system goes beyond pure classification and includes:
+- A **strategy layer** that converts probabilistic predictions into exact physical trades using hysteresis bands ($\tau_{entry}=0.60$) and a **20-step signal regime filter** to block sideways market noise.
+- A **backtracking module** that online-adjusts expert weights and strategy thresholds based on observed prediction errors.
+- A **backtesting engine** that simulates a trading portfolio ($hold_k=25$ duration constraint) and evaluates financial performance (Sharpe ratio, cumulative return, max drawdown, win rate).
 
 ---
 
@@ -27,14 +20,14 @@ A latency-simulating trading engine translating algorithmic predictions into phy
 
 Our Anchored Time-Series Ablation physically isolates the gap between mathematical accuracy and actual financial extraction:
 
-| Model | Classification Accuracy | Return |
-| :--- | :--- | :--- |
-| **B&H Benchmark** | -- | +32.5% |
-| **Temporal MLP** | **57.1%** | -5.8% |
-| **Best Single (XGB)** | 53.6% | +43.6% |
-| **Overall MoE** | 57.8% | **+46.5%** |
+| Model | Classification Accuracy | Return | Max Drawdown |
+| :--- | :--- | :--- | :--- |
+| **B&H Benchmark** | -- | +32.5% | -- |
+| **Temporal MLP** | **57.1%** | -5.8% | 6.0% |
+| **Best Single (XGB)** | 53.6% | +43.6% | 19.2% |
+| **Overall MoE** | 57.8% | **+46.5%** | **22.2%** |
 
-*Note: The Neural Network achieves extreme accuracy by guessing "Stationary," missing all physical directional trades (losing capital). The MoE synergizes XGBoost's directional depth splits with the MLP's baseline boundaries to extract maximum structural profit globally.*
+*Note: The Neural Network achieves extreme accuracy by guessing "Stationary," missing all physical directional trades. The MoE synergizes XGBoost's directional depth splits with the MLP's baseline boundaries to extract maximum structural profit globally.*
 
 ---
 
@@ -59,29 +52,40 @@ Install all dependencies with:
 pip install -r requirements.txt
 ```
 
-> **Note:** If you are using a GPU, install the appropriate CUDA-compatible version of PyTorch before running `pip install -r requirements.txt`. (The PyTorch script detects and activates NVIDIA CUDA automatically).
+> **Note:** If you are using a GPU, install the appropriate CUDA-compatible version of PyTorch from [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/) before running `pip install -r requirements.txt`.
 
 ---
 
 ## Dataset Setup
 
-This project uses the **FI-2010 Benchmark Dataset**.
+This project uses the **FI-2010 Benchmark Dataset** with pre-normalized `.txt` files.
 
 ### Expected Directory Structure
-Crucially, this project explicitly evaluates the raw unnormalized `NoAuction_DecPre` dataset in order to precisely calculate non-linear spatial formulas (Spread, L1 & L5 Order Imbalance).
+
 Place the dataset folder in the **root of the project directory** so the structure looks like this:
 
 ```
+Group_XX/
+├── BenchmarkDatasets/
+│   ├── Auction/
+│   │   ├── 1.Auction_Zscore/
+│   │   │   ├── Auction_Zscore_Training/
+│   │   │   │   ├── Train_Dst_Auction_Zscore_CF_1.txt
+│   │   │   │   └── ... (CF_1 through CF_9)
+│   │   │   └── Auction_Zscore_Testing/
+│   │   │       ├── Test_Dst_Auction_Zscore_CF_1.txt
+│   │   │       └── ... (CF_1 through CF_9)
+│   │   ├── 2.Auction_MinMax/
+│   │   └── 3.Auction_DecPre/
+│   └── NoAuction/
+│       ├── 1.NoAuction_Zscore/
+│       │   ├── NoAuction_Zscore_Training/
+│       │   │   └── Train_Dst_NoAuction_Zscore_CF_1.txt ... CF_9.txt
+│       │   └── NoAuction_Zscore_Testing/
+│       │       └── Test_Dst_NoAuction_Zscore_CF_1.txt ... CF_9.txt
+│       ├── 2.NoAuction_MinMax/
+│       └── 3.NoAuction_DecPre/
 ├── data/
-│   ├── BenchmarkDatasets/
-│   │   └── NoAuction/
-│   │       ├── 1.NoAuction_Zscore/
-│   │       ├── 2.NoAuction_MinMax/
-│   │       └── 3.NoAuction_DecPre/
-│   │           ├── NoAuction_DecPre_Training/
-│   │           │   └── Train_Dst_NoAuction_DecPre_CF_1.txt ... CF_9.txt
-│   │           └── NoAuction_DecPre_Testing/
-│   │               └── Test_Dst_NoAuction_DecPre_CF_1.txt ... CF_9.txt
 ├── experts/
 ├── moe/
 ├── strategy/
@@ -94,53 +98,154 @@ Place the dataset folder in the **root of the project directory** so the structu
 ```
 
 ### Dataset File Format
-- **Columns 0–143**: LOB feature arrays (augmented to 147 internally via Imbalance and Spread)
-- **Column 148**: Label for prediction horizon k=10
-- **Labels:** 0 = Up, 1 = Stationary, 2 = Down
+
+Each `.txt` file contains space/tab-separated values where:
+- **Columns 0–143** (144 total): Feature values (already normalized)
+- **Column 148** (0-indexed): Label for prediction horizon k=10 — used in this project
+- **Labels:** 1 = Up, 2 = Stationary, 3 = Down
+
+### Configuring the Dataset Path
+
+The dataset root path is configurable at the top of `run_experiment.py`:
+
+```python
+DATASET_ROOT = "BenchmarkDatasets"   # Change this if your dataset is elsewhere
+NORMALIZATION = "NoAuction_DecPre"   # Default normalization variant used (Requires raw integer volumes!)
+```
 
 ---
 
 ## Project Structure
 
-```text
+```
+Group_XX/
 ├── data/
-│   ├── load_fi2010.py       # Data loader: extracts and calculates Imbalance and Spread
+│   ├── load_fi2010.py       # Data loader: explicitly calculates L1 & L5 Imbalance and Spread
 │   └── cross_val.py         # Anchored forward CV fold iterator (folds 1–9)
 │
 ├── experts/
 │   ├── logistic_regression.py  # LR expert: L2 constraint, linear mapping
 │   ├── xgboost_expert.py       # XGBoost expert: Tree boosting (GPU-aware)
-│   └── mlp_expert.py           # Temporal MLP (PyTorch): lookback=5 sequence stack, Focal Loss
+│   └── mlp_expert.py           # Temporal MLP (PyTorch): lookback=5 sequence stack (dim=735), Focal Loss
 │
 ├── moe/
 │   ├── gating_network.py    # Gating network (PyTorch): dynamic Softmax trust evaluation
 │   └── mixture.py           # Weighted MoE probability interpolation
 │
 ├── strategy/
-│   ├── strategy_layer.py    # Decision rules: Evaluates Conviction thresholds + Regime Filter queue
-│   └── backtracking.py      # Error tracking and adjustment (Phase-1 legacy)
+│   ├── strategy_layer.py    # Decision rules: Evaluates Conviction thresholds + 20-step Regime Filter queue
+│   └── backtracking.py      # Error tracking and adjustment 
 │
 ├── backtest/
-│   ├── engine.py            # Financial latency simulator (hold_k=25, slippage logic)
+│   ├── engine.py            # Portfolio simulation (hold_k=25, slippage logic)
 │   └── metrics.py           # Evaluator: Sharpe, Maximum Drawdown, Hit Ratio
 │
+├── train.py                 # Stages 1–3: expert training + gating network training per fold
+├── evaluate.py              # Stage 4: inference + strategy + backtracking + backtesting
 ├── run_experiment.py        # Central master script driving full ablation across 9 CV Folds
-│
-├── fi2010_eda.ipynb         # Comprehensive physical Exploratory Data Analysis & Feature distribution
-├── report.tex               # Formal IEEE Latex academic submission 
-└── presentation.md          # Outline of defense slides
+├── requirements.txt
+├── fi2010_eda.ipynb         # Comprehensive physical Exploratory Data Analysis
+├── presentation.md          # Deck Outline
+├── report.tex               # LaTeX Academic Report
+└── README.md
 ```
+
+---
+
+## Run Instructions
+
+### Step 1 — Set Up Environment
+
+It is recommended to use a virtual environment:
+
+```bash
+# Create virtual environment (optional but recommended)
+python -m venv venv
+
+# Activate — Linux/macOS
+source venv/bin/activate
+
+# Activate — Windows
+venv\Scripts\activate
+```
+
+### Step 2 — Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+
+### Step 3 — Run the Full Experiment
+
+```bash
+python run_experiment.py
+```
+
+This single command executes the complete pipeline across all 9 cross-validation folds:
+1. Loads and preprocesses data for each fold
+2. Trains the three expert models (LR, XGBoost, MLP)
+3. Trains the gating network on stacked expert probabilities
+4. Runs inference with the strategy layer, backtracking module, and backtesting engine
+5. Aggregates and prints results
+
+### Step 4 — View Results
+
+After completion, the terminal will display a results summary including:
+
+- **Classification metrics** (mean ± std across 9 folds): Accuracy, Macro-F1, per-class F1
+- **Financial metrics** (mean ± std): Cumulative Return, Sharpe Ratio, Max Drawdown, Win Rate, Decision Accuracy
+- **Comparison tables**: Individual experts vs. MoE ensemble, MoE with vs. without backtracking, Strategy vs. buy-and-hold benchmark
+
+Model checkpoints for each fold are saved to `results/fold_{t}/`.
 
 ---
 
 ## Reproducibility
 
-All global randomness is strictly anchored via seed locking directly inside `run_experiment.py`:
+All random seeds are fixed at the start of `run_experiment.py`:
 
 ```python
-SEED = 42
+RANDOM_SEED = 42
 ```
-This forces `numpy`, `torch`, `random`, and `xgboost` into entirely deterministic boundaries to guarantee identically verifiable pipeline replication across any compliant execution node.
+
+This seeds `numpy`, `torch`, `random`, and `xgboost` to ensure fully reproducible results across runs.
+
+---
+
+## Method Summary
+
+### Expert Models
+
+| Expert | Type | Key Hyperparameters |
+|---|---|---|
+| Logistic Regression | Linear classifier | C ∈ {0.01, 0.1, 1, 10}, lbfgs solver |
+| XGBoost | Gradient-boosted trees | n_estimators=500, max_depth ∈ {3,4,5}, GPU-Hist |
+| MLP (PyTorch) | Temporal Neural network | 735→256→128→3, Dropout=0.3, Focal Loss |
+
+### Gating Network
+
+A lightweight neural network (144→64→3, softmax output) learns to assign input-dependent weights (w1, w2, w3) to the three experts. It is trained on 9-dimensional stacked expert probability outputs.
+
+### Strategy Layer
+
+Converts the final probability vector into a trading action using:
+- **Conviction Hysteresis**: Rejects weak trades by enforcing $\tau_{entry}=0.60$ and $\tau_{exit}=0.15$.
+- **Signal Regime Filter**: A 20-step rolling queue ($avg\_s_t > 0.55$) inherently blocking stochastic sideways market chop.
+
+### Backtracking Module
+
+Maintains a rolling buffer of 100 recent predictions and outcomes. Every 50 samples, it:
+- Reweights experts proportional to their recent accuracy
+- Adjusts strategy thresholds based on false positive / missed opportunity rates (clipped to [0.45, 0.85])
+
+### Backtesting Engine
+
+Simulates a long-only trading account with:
+- Initial capital: 10,000 units
+- Minimum holding period: $hold\_k = 25$ steps to mirror spread-crossing latency constraints
+- Transaction cost: 1 basis point per trade side
+- Metrics: Cumulative Return, Sharpe Ratio, Max Drawdown, Win Rate, Decision Accuracy
 
 ---
 
