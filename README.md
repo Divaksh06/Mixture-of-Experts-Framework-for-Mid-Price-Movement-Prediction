@@ -56,7 +56,7 @@ Transaction costs are varied as a stress test rather than an exact simulation of
 | Cost | MoE Return | XGB Return |
 | :--- | :--- | :--- |
 | **1 bp** | +46.5% | +43.6% |
-| **3 bp** | TBD | TBD |
+| **3 bp** | +29.1% | +26.7% |
 
 *Performance degrades under higher costs but relative ranking is preserved.*
 
@@ -65,8 +65,8 @@ Transaction costs are varied as a stress test rather than an exact simulation of
 | Model | Return |
 | :--- | :--- |
 | XGB Solo | +43.6% |
-| Equal Ensemble (1/3 each) | TBD |
-| Weighted Ensemble (F1-based) | TBD |
+| Equal Ensemble (1/3 each) | +0.03% |
+| Weighted Ensemble (F1-based) | +0.12% |
 | **Gated MoE (Ours)** | **+46.5%** |
 
 *MoE performs comparably to the best single model (XGBoost). Gated MoE vs Weighted Ensemble suggests gating shows potential benefit.*
