@@ -109,6 +109,14 @@ pip install -r requirements.txt
 
 ## Dataset Setup
 
+> [!IMPORTANT]
+> **Preliminary Step:** Before running the project, you MUST unzip the dataset file:
+> ```bash
+> # Unzip the dataset into the data/ directory
+> unzip data/BenchmarkDatasets.zip -d data/
+> ```
+> This will create the required `data/BenchmarkDatasets/` directory structure.
+
 This project uses the **FI-2010 Benchmark Dataset** with pre-normalized `.txt` files.
 
 ### Expected Directory Structure
