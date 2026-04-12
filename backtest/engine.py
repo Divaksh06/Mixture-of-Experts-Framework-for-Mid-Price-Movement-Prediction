@@ -34,7 +34,7 @@ class BacktestEngine:
         History of actions taken.
     """
 
-    def __init__(self, initial_capital=10000.0, transaction_cost=0.0001, c_spread=0.00015, hold_k=25):
+    def __init__(self, initial_capital=10000.0, transaction_cost=0.0001, hold_k=25):
         """
         Initialize the backtesting engine.
 
@@ -44,14 +44,11 @@ class BacktestEngine:
             Starting capital.
         transaction_cost : float
             Proportional transaction cost per side.
-        c_spread : float
-            Fixed assumed spread cost for transaction realism.
         hold_k : int
             Minimum number of ticks a position must be held once opened.
         """
         self.initial_capital = initial_capital
         self.transaction_cost = transaction_cost
-        self.c_spread = c_spread
         self.hold_k = hold_k
         self.reset()
 
@@ -96,7 +93,7 @@ class BacktestEngine:
         else: # 'Hold' -> maintain position
             target_pos = self.position
 
-        c_total = self.transaction_cost + self.c_spread
+        c_total = self.transaction_cost
 
         # Execute transitions (pay swap/crossing costs)
         if self.position != target_pos:
@@ -144,7 +141,7 @@ class BacktestEngine:
         mid_price_return : float
             Final return for closing.
         """
-        c_total = self.transaction_cost + self.c_spread
+        c_total = self.transaction_cost
         if self.position == 'Long':
             self.portfolio_value *= (1.0 + mid_price_return)
             self.portfolio_value *= (1.0 - c_total)

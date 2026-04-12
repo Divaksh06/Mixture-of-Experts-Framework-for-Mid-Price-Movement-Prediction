@@ -63,7 +63,7 @@ def sortino_ratio(returns, rf=0.0):
     
     if downside_std == 0:
         print("    [Warning] Sortino undefined due to zero downside volatility")
-        return np.nan
+        return 0.0
     return float(np.mean(excess) / downside_std)
 
 
@@ -160,6 +160,21 @@ def buy_and_hold_return(mid_price_returns):
         return 0.0
     cumulative = np.prod(1.0 + np.array(mid_price_returns)) - 1.0
     return float(cumulative)
+
+
+def passive_signal_return(y_true, mid_price_returns):
+    """
+    Compute the oracle upper-bound return using perfect directional knowledge,
+    using geometric compounding to prevent numerical instability.
+    """
+    # 0=Up, 1=Stationary, 2=Down 
+    passive_pos = np.where(y_true == 0, 1, np.where(y_true == 2, -1, 0))
+    oracle_returns = passive_pos[:-1] * mid_price_returns[:-1]
+    
+    wealth = 1.0
+    for r in oracle_returns:
+        wealth *= (1.0 + r)
+    return float(wealth - 1.0)
 
 
 def profit_factor(trade_returns):

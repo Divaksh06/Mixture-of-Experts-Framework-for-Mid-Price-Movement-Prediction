@@ -46,7 +46,8 @@ class BacktrackingModule:
     def __init__(self, initial_weights=None, theta_buy=0.70, theta_sell=0.70,
                  delta=0.15, N_buf=100, N_upd=50, epsilon_theta=0.02,
                  tau_FP=0.15, tau_FN=0.10, theta_reverse=0.70,
-                 error_margin=0.05, lambda_ema=0.9, eta_lr=0.1):
+                 error_margin=0.05, lambda_ema=0.9, eta_lr=0.1,
+                 tau_entry=0.60, tau_exit=0.15):
         """
         Initialize the backtracking module.
 
@@ -90,6 +91,8 @@ class BacktrackingModule:
         self.theta_buy = theta_buy
         self.theta_sell = theta_sell
         self.delta = delta
+        self.tau_entry = tau_entry
+        self.tau_exit = tau_exit
         self.N_buf = N_buf
         self.N_upd = N_upd
         self.epsilon_theta = epsilon_theta
@@ -232,6 +235,18 @@ class BacktrackingModule:
         elif fn_rate_sell > self.tau_FN:
             self.theta_sell = max(self.theta_sell - self.epsilon_theta, 0.45)
 
+        # Adjust tau_entry — the primary execution gate
+        # High combined FP → tighten entry (fewer, higher-quality trades)
+        # High combined FN → loosen entry (capture missed opportunities)
+        combined_fp = (fp_rate_buy + fp_rate_sell)
+        combined_fn = (fn_rate_buy + fn_rate_sell)
+        if combined_fp > 2 * self.tau_FP:
+            self.tau_entry = min(self.tau_entry + self.epsilon_theta, 0.80)
+            self.tau_exit = max(self.tau_exit - 0.01, 0.05)
+        elif combined_fn > 2 * self.tau_FN:
+            self.tau_entry = max(self.tau_entry - self.epsilon_theta, 0.40)
+            self.tau_exit = min(self.tau_exit + 0.01, 0.25)
+
     def check_action_correction(self, pfinal, action):
         """
         Check if the current action should be overridden due to reversal.
@@ -283,7 +298,9 @@ class BacktrackingModule:
         return {
             'theta_buy': self.theta_buy,
             'theta_sell': self.theta_sell,
-            'delta': self.delta
+            'delta': self.delta,
+            'tau_entry': self.tau_entry,
+            'tau_exit': self.tau_exit,
         }
 
     def set_prev_action(self, action, y_pred):

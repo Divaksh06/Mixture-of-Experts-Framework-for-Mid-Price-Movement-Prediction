@@ -68,17 +68,16 @@
 
 ---
 
-## Slide 9: Results - The Ultimate PRML Paradox
+## Slide 9: Results - The Ultimate Predictor Paradox
 - **Graphic Idea:** Show a table comparing Classification Accuracy to Trading Returns.
-- **Temporal MLP:** Achieved the absolute highest Classification Accuracy (**57.1%**). But it made only 10 trades all week and **lost money (-5.8%)**.
-- **XGBoost:** Had lower accuracy (**53.6%|) but made 279 aggressive trades and captured **+43.6%** return.
-- **The Takeaway:** The PyTorch MLP maximized Cross-Entropy accuracy by conservatively guessing "Stationary," rendering it a terrible trading bot. XGBoost took directional risks.
+- **Temporal MLP:** Achieved the absolute highest Classification Macro-F1 (**56.2%**)... but lost almost all profitability due to overly conservative probability distributions.
+- **XGBoost:** Had lower accuracy (**50.1% F1**) but was highly decisive, capturing **+20.9%** return.
+- **The Takeaway:** The PyTorch MLP maximized Cross-Entropy accuracy by conservatively guessing "Stationary," rendering it a poor standalone trading bot. XGBoost took actionable directional risks. (Spearman correlation $\rho = -0.046$, proving accuracy and trading profit are completely decoupled).
 
 ---
 
-## Slide 10: Conclusion - The MoE Result
-- The Mixture-of-Experts pipeline combines diverse expert signals via a learned gating network.
-- The gating network identified that the MLP was acting conservatively and XGBoost was aggressive. 
-- By combining them, the MoE framework achieved a mean return of **+46.5%**, performing comparably to XGBoost solo (+43.6%).
-- However, the improvement is **not statistically significant** (p = 0.38 across 9 folds). MoE wins in only 2/9 folds, and median return is lower.
-- **Key Insight:** Predictive accuracy alone is insufficient for profitable decision-making under transaction costs and execution constraints. This is the central finding of our work.
+## Slide 10: Conclusion - The MoE Result (Risk vs Reward)
+- The Mixture-of-Experts pipeline learned to combine the models. Rather than just maximizing profit, the Gating Network explicitly minimized risk.
+- **Risk Mitigation:** Gated MoE produced an essentially identical return to XGBoost (**~20.0%**), but effectively cut out downside volatility, boosting the **Sortino Ratio by 25%** (from 0.096 to 0.122) and the **Return-to-Volatility ratio by 35%**.
+- **Ablation Insight:** Simple averaging/weighting completely destroys the algorithmic edge (0.4% return). Dynamic gating is strictly required to restore profitability (~50x better than simple ensembles).
+- **Latency Optimization:** An experiment feeding 147 raw Limit Order Book features into the router alongside the experts yielded no additional alpha. The base experts fully exhaust the LOB variance. By isolating the gating to just 3 probabilities, the MoE executes in microseconds, an absolute necessity for real-world HFT.

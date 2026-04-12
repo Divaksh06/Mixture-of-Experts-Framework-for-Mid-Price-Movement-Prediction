@@ -28,7 +28,26 @@ Email}
 \maketitle
 
 \begin{abstract}
-Predicting the short-term trajectory of mid-prices in a Limit Order Book (LOB) is a profoundly difficult financial engineering problem due to extreme non-stationarity, microstructure noise, and imbalanced class distributions. This comprehensive project introduces an advanced Mixture-of-Experts (MoE) machine learning pipeline designed to execute profitable High-Frequency Trading (HFT) decisions on the FI-2010 benchmark dataset. We rigorously explore the ``Classification-Profitability Paradox''---demonstrating that models optimizing heavily for theoretical mathematical accuracy often fail entirely in financial execution due to unmodeled spread-crossing constraints and low-conviction thresholds. By assembling diverse algorithmic specialists---an L2-Regularized Logistic Regression, a Gradient-Boosted Decision Tree (XGBoost), and a Temporal Multi-Layer Perceptron (MLP) mapping sequential data via Focal Loss---and orchestrating them via an overarching Gating Network coupled with a 20-step signal regime execution filter, our architectural framework achieves a mean return of +46.5\% across 9 chronological folds. While this performs comparably to the best single expert (XGBoost, +43.6\%), the difference is not statistically significant (paired t-test, p = 0.38), highlighting the central challenge that predictive accuracy alone is insufficient for profitable decision-making under transaction costs and execution constraints.
+Predicting short-term mid-price movements in Limit Order Books (LOBs) is 
+a profoundly difficult financial engineering problem due to extreme 
+non-stationarity, microstructure noise, and severe class imbalance. This 
+work introduces a Mixture-of-Experts (MoE) pipeline on the FI-2010 
+benchmark dataset combining L2-Regularised Logistic Regression, 
+Gradient-Boosted Decision Trees (XGBoost), and a Temporal Multi-Layer 
+Perceptron (MLP), orchestrated via a learned Gating Network with a 
+20-step signal regime filter. We rigorously investigate the 
+\textit{Classification-Profitability Paradox}---demonstrating that the 
+highest-accuracy model (MLP, Macro-F1 = 56.2\%) achieves near-zero 
+financial return at 1bp cost, while lower-accuracy XGBoost generates 
+positive returns by maintaining directional conviction above execution 
+thresholds. Across 9 chronological folds, the Gated MoE achieves a mean 
+return of $+19.98\%$ at 1bp, with superior risk-adjusted performance 
+(Sortino = 0.1224) compared to XGBoost solo (Sortino = 0.0969), though 
+the raw return difference is not statistically significant ($p = 0.90$). 
+A critical finding is that naive ensemble averaging (equal-weight, 
+F1-weighted) collapses returns to near zero by diluting conviction below 
+the $\tau_{entry}=0.60$ execution threshold---confirming that a learned 
+gating mechanism is necessary, if not sufficient, for financial extraction.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -132,34 +151,127 @@ All directional execution functions are physically halted unless the sequence de
 This isolated regime architecture definitively prevented over 100+ "noise-based" losing trades per fold subset. 
 
 \section{Experimental Results and Discussion}
-The pipeline was validated extensively using Anchored Forward Time-Series Cross-Validation across exactly 9 chronologically sequential folds, absolutely preventing data leakage. 
+The pipeline was evaluated using Anchored Forward Time-Series 
+Cross-Validation across 9 chronologically sequential folds, preventing 
+data leakage. All metrics are reported as mean $\pm$ std across folds.
 
+\subsection{Classification Performance}
 \begin{table}[htbp]
-\caption{Classification vs Financial Return Matrix (9-Fold Ablation)}
+\caption{Classification Metrics (9-Fold Mean $\pm$ Std)}
 \begin{center}
-\begin{tabular}{lccc}
+\begin{tabular}{lcc}
 \toprule
-\textbf{Model Structure} & \textbf{Macro F1} & \textbf{Mean Trades} & \textbf{Total Return} \\
+\textbf{Model} & \textbf{Accuracy} & \textbf{Macro-F1} \\
 \midrule
-Best Single (XGB)  & 49.9\% & 279 & +43.6\% \\
-Temporal MLP       & \textbf{56.2\%} & 10 & -5.8\% \\
-\textbf{Overall MoE} & 54.1\% & \textbf{280} & \textbf{+46.5\%} \\
+LR (Expert 1)          & 0.447 $\pm$ 0.019 & 0.432 $\pm$ 0.014 \\
+XGBoost (Expert 2)     & 0.537 $\pm$ 0.028 & 0.502 $\pm$ 0.044 \\
+MLP (Expert 3)         & \textbf{0.572 $\pm$ 0.036} & \textbf{0.562 $\pm$ 0.033} \\
+Gated MoE              & 0.571 $\pm$ 0.038 & 0.534 $\pm$ 0.064 \\
 \bottomrule
 \end{tabular}
-\label{tab_ablation}
 \end{center}
 \end{table}
 
-\subsection{Analysis of the Predictor Paradox}
-The isolated table heavily exposes the discrepancy between statistical precision and monetary execution. 
-1. \textbf{The Network Trap}: The Temporal MLP secured the highest theoretical classification accuracy across the dataset using Focal Loss. However, it achieved this by conservatively projecting probabilities incredibly close to the classification baseline boundaries. Because it never confidently breached the required mathematical $\tau_{entry}=0.60$ band, it made essentially zero entries (only 10 trades historically) and steadily lost capital to mandatory crossing slips.
-2. \textbf{The Boosting Offensive}: XGBoost attained substantially lower macroscopic classification metrics (Macro-F1 $49.9\%$ vs MLP $56.2\%$). However, it decisively bypassed threshold limitations with heavy conviction density, authorizing 279 highly targeted executions and ripping $+43.6\%$ off the benchmark asset trace.
+\subsection{The Classification-Profitability Paradox}
+Table~\ref{tab_paradox} directly formalises the central paradox. The MLP 
+achieves the highest Macro-F1 but near-zero return, while XGBoost 
+sacrifices classification accuracy for directional conviction. The Gated 
+MoE achieves the highest risk-adjusted performance.
 
-\subsection{The Mixture of Experts Outcome}
-The MoE Gating architecture demonstrates the ability to combine expert signals. The Gating algorithm learned to weight the trees' directional conviction while utilizing the MLP's Stationarity bias to block noisy edge-cases. The resulting framework achieved a mean return of $+46.5\%$, which performs comparably to XGBoost solo ($+43.6\%$). However, a paired t-test across 9 folds yields $p = 0.38$, indicating no statistically significant improvement. The MoE wins in only 2 of 9 folds, and the median return is lower than XGBoost's. This suggests that while the gating mechanism shows potential benefit over naive ensembles, it does not consistently improve upon the best single expert in this dataset.
+\begin{table}[htbp]
+\caption{Classification vs Financial Performance (1bp, 9-Fold Mean)}
+\label{tab_paradox}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Macro-F1} & \textbf{Return} & \textbf{Sortino} \\
+\midrule
+MLP (Expert 3)     & \textbf{0.562} & $\approx 0\%$  & low \\
+XGBoost (Expert 2) & 0.502          & +20.94\%       & 0.097 \\
+\textbf{Gated MoE} & 0.534          & +19.98\%       & \textbf{0.122} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+The MLP's conservative probability outputs rarely breach 
+$\tau_{entry}=0.60$, resulting in very few trades and negative net return 
+from transaction costs. XGBoost's tabular split mappings produce 
+high-conviction directional outputs that consistently exceed the execution 
+threshold. The MoE Gating Network learns to preserve this conviction while 
+reducing return volatility.
+
+\subsection{Gating Ablation}
+\begin{table}[htbp]
+\caption{Gating Ablation: Return at 1bp (9-Fold Mean $\pm$ Std)}
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Ensemble Method} & \textbf{Mean Return} \\
+\midrule
+XGB Solo                & +20.94\% $\pm$ 74.97\% \\
+Equal-Weight (1/3 each) & +0.47\% $\pm$ 0.86\%   \\
+F1-Weighted Blend       & +0.48\% $\pm$ 0.77\%   \\
+\textbf{Gated MoE}      & +19.98\% $\pm$ 66.73\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+A critical finding: naive ensemble averaging (equal-weight and F1-weighted) 
+collapses financial return to near zero ($\approx$+0.5\%). Averaging the 
+probability vectors dilutes directional conviction below the 
+$\tau_{entry}=0.60$ execution threshold, preventing virtually all trades 
+from executing. The learned Gating Network avoids this collapse by 
+learning to preserve XGBoost's conviction structure, achieving returns 
+comparable to XGB solo with reduced variance.
+
+\subsection{Transaction Cost Sensitivity}
+\begin{table}[htbp]
+\caption{Cost Sensitivity Analysis}
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Cost} & \textbf{MoE Return} & \textbf{XGB Return} \\
+\midrule
+1 bp & +19.98\% $\pm$ 66.73\% & +20.94\% $\pm$ 74.97\% \\
+3 bp & +6.11\% $\pm$ 55.13\%  & +6.91\% $\pm$ 62.47\%  \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Returns decay substantially under modest cost increases, reflecting the 
+high-frequency nature of the strategy. At real-world execution costs of 
+5--10bp, profitability cannot be guaranteed. These figures should be 
+interpreted as optimistic simulation estimates.
+
+\subsection{Statistical Rigor}
+A paired t-test across 9 folds yields $t = -0.129$, $p = 0.90$, 
+indicating no statistically significant raw return difference between 
+MoE and XGBoost. The MoE outperforms XGB in 4 of 9 folds. Median returns 
+are negative for both strategies (MoE: $-1.93\%$, XGB: $-1.20\%$), 
+indicating that high positive returns in a minority of folds drive the 
+positive mean---a characteristic of high-variance trading strategies on 
+short horizons. The Spearman correlation between Macro-F1 and financial 
+return across models yields $\rho = -0.046$ ($p = 0.82$), providing weak 
+but directionally consistent evidence for the paradox hypothesis. Due to 
+temporal dependence between folds, all statistical tests are approximate.
 
 \section{Conclusion}
-This framework illustrates that limit order book predictive architectures cannot be optimized solely via abstract classification limits. By combining diverse algorithmic priors and enforcing structural hysteresis buffers, the MoE pipeline achieves competitive performance. However, the MoE does not show statistically significant improvement over the best single model (XGBoost), reinforcing the central finding: predictive accuracy alone is insufficient for profitable decision-making under transaction costs and execution constraints. Performance differences across 9 chronological folds remain within variance ($p = 0.38$).
+This work demonstrates that LOB mid-price prediction cannot be optimised 
+solely via classification accuracy. The core finding is threefold. First, 
+the Classification-Profitability Paradox is empirically supported: the 
+highest-F1 model (MLP) fails financially, while the lower-F1 XGBoost 
+generates positive returns by maintaining execution conviction. Second, 
+naive ensemble averaging catastrophically suppresses financial performance 
+by diluting probability mass below execution thresholds---making a learned 
+Gating Network architecturally necessary. Third, the Gated MoE provides 
+evidence of risk-adjusted improvement over single experts (higher Sortino, 
+lower return variance) without statistically significant raw return gains 
+($p = 0.90$). These findings reinforce that ensemble design for financial 
+execution must account for threshold-sensitive execution dynamics, not 
+only classification objectives.
 
 \begin{thebibliography}{00}
 \bibitem{b1} A. Ntakaris et al., ``Benchmark dataset for mid-price forecasting of limit order book data with machine learning methodology.'' Journal of Forecasting, vol. 37, no. 8, pp. 852-866, 2018.
