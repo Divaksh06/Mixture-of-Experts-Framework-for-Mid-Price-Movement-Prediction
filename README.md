@@ -49,11 +49,11 @@ The gating network empirically learns to route ~78% of predictions through XGBoo
 | **XGB alone** | +32.8% ± 86.2% | +3.2% | 0.097 | 22.7% | 280 | 58.7% | 74.2% |
 | **MLP alone** | +0.2% ± 0.4% | 0.0% | 0.006 | 0.2% | 9.6 | — | — |
 | **Gated MoE** | +31.8% ± 76.9% | **+7.8%** | **0.123** | **11.7%** | 281 | 57.9% | 74.4% |
-| **MoE + BT**† | +60.7% ± 120.5% | +32.4% | 0.177 | 13.0% | 397 | 55.2% | 67.1% |
-| **MoE + CR** | +32.4% ± 86.6% | +3.1% | 0.096 | 22.8% | 281 | 57.9% | 74.3% |
+| **MoE + BT**  | +60.7% ± 120.5% | +32.4% | 0.177 | 13.0% | 397 | 55.2% | 67.1% |
+| **MoE + CR**  | +32.4% ± 86.6% | +3.1% | 0.096 | 22.8% | 281 | 57.9% | 74.3% |
 | **Buy & Hold** | +32.5% ± 4.4% | +31.1% | — | — | — | — | — |
 
-† **Negative Result:** Backtracking degrades precision and win rate; see Section 9 below.
+**Negative Result:** Backtracking degrades precision and win rate; see Section 9 below.
 
 > **Median-First Reporting.** Standard deviations exceed means for all active strategies. Median return is the honest measure of typical session performance. The MoE improves median return **2.4x** (+7.8% vs +3.2%) over XGBoost solo. 
 
